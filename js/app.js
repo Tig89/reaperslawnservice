@@ -1,6 +1,6 @@
 /**
  * Battle Plan - Main Application
- * Simple daily life organizer PWA
+ * Army-style task prioritization with ACE+LMT scoring
  */
 
 class BattlePlanApp {
@@ -16,6 +16,18 @@ class BattlePlanApp {
     this.searchQuery = '';
     this.searchAll = false;
 
+    // Edit modal state
+    this.editState = {
+      A: null, C: null, E: null,
+      L: null, M: null, T: null,
+      tag: null,
+      estimate_bucket: null,
+      confidence: null
+    };
+
+    // Pending completion for actual time tracking
+    this.pendingCompletionId = null;
+
     this.init();
   }
 
@@ -25,7 +37,9 @@ class BattlePlanApp {
     // Run rollover on app load
     await db.runRollover();
 
+    // Load settings
     this.timerDefault = await db.getSetting('timerDefault', 25);
+
     this.bindEvents();
     this.render();
     this.updateHUD();
@@ -54,8 +68,11 @@ class BattlePlanApp {
     document.getElementById('inbox-input').addEventListener('keydown', (e) => this.handleInboxKeydown(e));
     document.getElementById('inbox-add-btn').addEventListener('click', () => this.addInboxItem());
 
-    // Today
+    // Today actions
     document.getElementById('start-focus-btn').addEventListener('click', () => this.startFocus());
+    document.getElementById('suggest-top3-btn').addEventListener('click', () => this.suggestTop3());
+    document.getElementById('rebuild-top3-btn').addEventListener('click', () => this.rebuildTop3());
+    document.getElementById('auto-balance-btn').addEventListener('click', () => this.autoBalance());
 
     // Routines
     document.getElementById('routine-name-input').addEventListener('keydown', (e) => {
@@ -72,10 +89,58 @@ class BattlePlanApp {
     });
     document.getElementById('custom-timer').addEventListener('change', (e) => this.setCustomTimer(e));
 
+    // Capacity settings
+    document.getElementById('setting-weekday-capacity').addEventListener('change', (e) => {
+      db.setSetting('weekday_capacity_minutes', parseInt(e.target.value) || 180);
+      this.updateHUD();
+    });
+    document.getElementById('setting-weekend-capacity').addEventListener('change', (e) => {
+      db.setSetting('weekend_capacity_minutes', parseInt(e.target.value) || 360);
+      this.updateHUD();
+    });
+    document.getElementById('setting-slack').addEventListener('change', (e) => {
+      db.setSetting('always_plan_slack_percent', parseInt(e.target.value) || 30);
+      this.updateHUD();
+    });
+
     // Edit Modal
     document.getElementById('edit-save-btn').addEventListener('click', () => this.saveEditItem());
     document.getElementById('edit-delete-btn').addEventListener('click', () => this.deleteEditItem());
     document.getElementById('edit-cancel-btn').addEventListener('click', () => this.closeEditModal());
+
+    // Edit Modal - Tag buttons
+    document.querySelectorAll('.tag-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.selectTag(btn.dataset.tag));
+    });
+
+    // Edit Modal - Preset buttons
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.applyPreset(btn.dataset.preset));
+    });
+
+    // Edit Modal - Score buttons (ACE + LMT)
+    document.querySelectorAll('.score-buttons').forEach(container => {
+      const field = container.dataset.field;
+      container.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => this.selectScore(field, parseInt(btn.dataset.value)));
+      });
+    });
+
+    // Edit Modal - Bucket buttons
+    document.querySelectorAll('.bucket-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.selectBucket(parseInt(btn.dataset.bucket)));
+    });
+
+    // Edit Modal - Confidence buttons
+    document.querySelectorAll('.confidence-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.selectConfidence(btn.dataset.confidence));
+    });
+
+    // Actual Time Modal
+    document.querySelectorAll('.actual-bucket-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.completeWithActualTime(parseInt(btn.dataset.bucket)));
+    });
+    document.getElementById('skip-actual-btn').addEventListener('click', () => this.skipActualTime());
 
     // Routine Modal
     document.getElementById('routine-item-input').addEventListener('keydown', (e) => {
@@ -101,6 +166,19 @@ class BattlePlanApp {
         }
       });
     });
+
+    // Load capacity settings on init
+    this.loadCapacitySettings();
+  }
+
+  async loadCapacitySettings() {
+    const weekday = await db.getSetting('weekday_capacity_minutes', 180);
+    const weekend = await db.getSetting('weekend_capacity_minutes', 360);
+    const slack = await db.getSetting('always_plan_slack_percent', 30);
+
+    document.getElementById('setting-weekday-capacity').value = weekday;
+    document.getElementById('setting-weekend-capacity').value = weekend;
+    document.getElementById('setting-slack').value = slack;
   }
 
   // ==================== NAVIGATION ====================
@@ -132,11 +210,42 @@ class BattlePlanApp {
 
   async updateHUD() {
     const stats = await db.getTodayStats();
+    const usableCapacity = await db.getUsableCapacity();
 
-    document.getElementById('hud-task-count').textContent = stats.totalTasks;
+    // Calculate buffered time for all today items
+    const todayItems = await db.getTodayItems();
+    let totalBuffered = 0;
+    let monsterCount = 0;
+    let ratedCount = 0;
+    let unratedCount = 0;
+
+    for (const item of todayItems) {
+      if (db.isRated(item)) {
+        ratedCount++;
+        const buffered = await db.getBufferedMinutes(item);
+        totalBuffered += buffered || 0;
+        if (db.isMonster(item)) monsterCount++;
+      } else {
+        unratedCount++;
+      }
+    }
+
+    document.getElementById('hud-buffered').textContent = totalBuffered;
+    document.getElementById('hud-capacity').textContent = usableCapacity;
     document.getElementById('hud-top3-count').textContent = stats.top3Count;
-    document.getElementById('hud-minutes').textContent = stats.totalMinutes;
+    document.getElementById('hud-monster-count').textContent = monsterCount;
+    document.getElementById('hud-rated').textContent = ratedCount;
+    document.getElementById('hud-unrated').textContent = unratedCount;
 
+    // Monster visibility
+    const monsterEl = document.getElementById('hud-monster');
+    if (monsterCount > 0) {
+      monsterEl.style.color = 'var(--monster)';
+    } else {
+      monsterEl.style.color = '';
+    }
+
+    // Overdue
     const overdueEl = document.getElementById('hud-overdue');
     const overdueCountEl = document.getElementById('hud-overdue-count');
 
@@ -145,6 +254,14 @@ class BattlePlanApp {
       overdueCountEl.textContent = stats.overdueCount;
     } else {
       overdueEl.classList.add('hidden');
+    }
+
+    // Capacity warning
+    const warningEl = document.getElementById('capacity-warning');
+    if (totalBuffered > usableCapacity) {
+      warningEl.classList.remove('hidden');
+    } else {
+      warningEl.classList.add('hidden');
     }
   }
 
@@ -188,11 +305,17 @@ class BattlePlanApp {
     if (this.searchAll) {
       // Search across all items
       const allItems = await db.getAllItems();
-      return allItems.filter(item => item.text.toLowerCase().includes(query));
+      return allItems.filter(item =>
+        item.text.toLowerCase().includes(query) ||
+        (item.next_action && item.next_action.toLowerCase().includes(query))
+      );
     }
 
     // Search within current view items
-    return items.filter(item => item.text.toLowerCase().includes(query));
+    return items.filter(item =>
+      item.text.toLowerCase().includes(query) ||
+      (item.next_action && item.next_action.toLowerCase().includes(query))
+    );
   }
 
   async renderInbox() {
@@ -202,7 +325,7 @@ class BattlePlanApp {
     const list = document.getElementById('inbox-list');
 
     // Sort newest first
-    const sorted = items.sort((a, b) => new Date(b.created) - new Date(a.created));
+    const sorted = items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     if (sorted.length === 0) {
       const msg = this.searchQuery ? 'No matching items' : 'Inbox is empty. Add something above!';
@@ -227,11 +350,12 @@ class BattlePlanApp {
     // Top 3 list
     const top3List = document.getElementById('top3-list');
     if (top3Items.length === 0) {
-      top3List.innerHTML = '<li class="empty-state"><p>Lock your Top 3 priorities</p></li>';
+      top3List.innerHTML = '<li class="empty-state"><p>Tap "Suggest Top 3" to auto-select priorities</p></li>';
     } else {
-      top3List.innerHTML = top3Items.map((item, index) =>
-        this.renderItem(item, { isTop3: true, top3Number: index + 1 })
-      ).join('');
+      const top3Html = await Promise.all(top3Items.map(async (item, index) =>
+        await this.renderItemAsync(item, { isTop3: true, top3Number: index + 1 })
+      ));
+      top3List.innerHTML = top3Html.join('');
     }
 
     // Other today items
@@ -240,9 +364,10 @@ class BattlePlanApp {
       const msg = this.searchQuery ? 'No matching items' : 'Mark items as Today in Inbox';
       todayList.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
     } else {
-      todayList.innerHTML = otherItems.map(item =>
-        this.renderItem(item, { showTop3Toggle: true })
-      ).join('');
+      const otherHtml = await Promise.all(otherItems.map(async item =>
+        await this.renderItemAsync(item, { showTop3Toggle: true })
+      ));
+      todayList.innerHTML = otherHtml.join('');
     }
 
     this.bindItemEvents();
@@ -276,7 +401,7 @@ class BattlePlanApp {
       return;
     }
 
-    const sorted = items.sort((a, b) => new Date(b.created) - new Date(a.created));
+    const sorted = items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
     this.bindItemEvents();
   }
@@ -288,20 +413,56 @@ class BattlePlanApp {
     const selectedClass = item.id === this.selectedItemId ? 'selected' : '';
     const isOverdue = db.isOverdue(item);
     const overdueClass = isOverdue ? 'overdue' : '';
-    const dateStr = new Date(item.created).toLocaleDateString();
+    const dateStr = new Date(item.created_at).toLocaleDateString();
 
-    let metaHtml = `<span class="item-date">${dateStr}</span>`;
-    if (item.estimate) {
-      metaHtml += `<span class="item-estimate">${item.estimate} min</span>`;
+    // Calculate scores
+    const scores = db.calculateScores(item);
+    const badges = db.calculateBadges(item);
+    const isRated = db.isRated(item);
+
+    // Build badges HTML
+    let badgesHtml = '';
+    if (badges.length > 0) {
+      badgesHtml = `<div class="badges">${badges.map(b =>
+        `<span class="badge badge-${b.toLowerCase()}">${b}</span>`
+      ).join('')}</div>`;
     }
+
+    // Build meta HTML
+    let metaHtml = '';
+
+    if (scores.priority_score !== null) {
+      metaHtml += `<span class="item-score">Score: ${scores.priority_score}</span>`;
+    }
+
+    if (item.estimate_bucket) {
+      const bucketLabel = item.estimate_bucket >= 60
+        ? `${item.estimate_bucket / 60}h`
+        : `${item.estimate_bucket}m`;
+      metaHtml += `<span class="item-bucket">${bucketLabel}</span>`;
+    }
+
+    if (item.confidence) {
+      metaHtml += `<span class="item-confidence ${item.confidence}">${item.confidence}</span>`;
+    }
+
     if (item.tag) {
       metaHtml += `<span class="tag tag-${item.tag}">${item.tag}</span>`;
     }
+
+    metaHtml += `<span class="item-date">${dateStr}</span>`;
+
     if (item.scheduled_for_date) {
       metaHtml += `<span class="item-scheduled">Scheduled: ${item.scheduled_for_date}</span>`;
     }
     if (item.dueDate) {
       metaHtml += `<span class="due-date">Due: ${item.dueDate}</span>`;
+    }
+
+    // Next action
+    let nextActionHtml = '';
+    if (item.next_action) {
+      nextActionHtml = `<div class="item-next-action">${this.escapeHtml(item.next_action)}</div>`;
     }
 
     let pillsHtml = '';
@@ -331,8 +492,10 @@ class BattlePlanApp {
         ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
         <div class="item-header">
           <div class="item-text">${this.escapeHtml(item.text)}</div>
-          ${isOverdue ? '<span class="overdue-badge">Overdue</span>' : ''}
+          ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
         </div>
+        ${nextActionHtml}
+        ${badgesHtml}
         <div class="item-meta">
           ${metaHtml}
         </div>
@@ -340,6 +503,11 @@ class BattlePlanApp {
         ${top3Html ? `<div class="status-pills">${top3Html}</div>` : ''}
       </li>
     `;
+  }
+
+  async renderItemAsync(item, options = {}) {
+    // Same as renderItem but can add async features like buffered time
+    return this.renderItem(item, options);
   }
 
   bindItemEvents() {
@@ -373,8 +541,8 @@ class BattlePlanApp {
         const itemId = btn.closest('.item').dataset.id;
         const item = await db.getItem(itemId);
         const result = await db.setTop3(itemId, !item.isTop3);
-        if (result.error) {
-          alert(result.error);
+        if (result && result.error) {
+          alert(result.message || result.error);
         } else {
           this.render();
           this.updateHUD();
@@ -413,11 +581,18 @@ class BattlePlanApp {
   async setItemStatus(id, status) {
     const item = await db.getItem(id);
 
+    if (status === 'done') {
+      // Check if item has estimate - prompt for actual time
+      if (item.estimate_bucket) {
+        this.pendingCompletionId = id;
+        document.getElementById('actual-time-modal').classList.remove('hidden');
+        return;
+      }
+    }
+
     if (status === 'tomorrow') {
-      // Special handling for Tomorrow - sets scheduled_for_date
       await db.setTomorrow(id);
     } else if (status === 'today') {
-      // Clear scheduled date when marking as Today
       await db.setToday(id);
     } else if (item.status === status) {
       // Toggle off - return to inbox
@@ -428,7 +603,6 @@ class BattlePlanApp {
         scheduled_for_date: null
       });
     } else {
-      // Set new status
       const updates = {
         status,
         scheduled_for_date: null
@@ -439,6 +613,108 @@ class BattlePlanApp {
       }
       await db.updateItem(id, updates);
     }
+
+    await this.render();
+    await this.updateHUD();
+  }
+
+  // ==================== TOP 3 SUGGESTION ====================
+
+  async suggestTop3() {
+    const suggestion = await db.suggestTop3();
+
+    if (suggestion.suggested.length === 0) {
+      const todayItems = await db.getTodayItems();
+      if (todayItems.length === 0) {
+        alert('No tasks in Today. Add some tasks first!');
+      } else {
+        alert('No rated tasks found. Double-tap tasks to rate them with ACE+LMT scores.');
+      }
+      return;
+    }
+
+    await db.applyTop3Suggestion(suggestion);
+
+    // Show message if applicable
+    const msgEl = document.getElementById('suggestion-message');
+    if (suggestion.message) {
+      msgEl.textContent = suggestion.message;
+      msgEl.classList.remove('hidden');
+    } else {
+      msgEl.classList.add('hidden');
+    }
+
+    await this.render();
+    await this.updateHUD();
+  }
+
+  async rebuildTop3() {
+    // Clear current Top 3 first
+    const allItems = await db.getAllItems();
+    for (const item of allItems) {
+      if (item.isTop3) {
+        await db.updateItem(item.id, { isTop3: false, top3Order: null });
+      }
+    }
+
+    // Then suggest new ones
+    await this.suggestTop3();
+  }
+
+  async autoBalance() {
+    // Remove lowest priority items from Top 3 until under capacity
+    const usableCapacity = await db.getUsableCapacity();
+    let top3Items = await db.getTop3Items();
+
+    // Calculate scores and sort by priority (lowest first for removal)
+    const scored = await Promise.all(top3Items.map(async item => {
+      const scores = db.calculateScores(item);
+      const bufferedMinutes = await db.getBufferedMinutes(item);
+      return { ...item, ...scores, bufferedMinutes };
+    }));
+
+    scored.sort((a, b) => (a.priority_score || 0) - (b.priority_score || 0));
+
+    let totalBuffered = scored.reduce((sum, i) => sum + (i.bufferedMinutes || 0), 0);
+
+    // Remove lowest priority items until under capacity
+    for (const item of scored) {
+      if (totalBuffered <= usableCapacity) break;
+
+      await db.updateItem(item.id, { isTop3: false, top3Order: null });
+      totalBuffered -= item.bufferedMinutes || 0;
+    }
+
+    // Hide warning
+    document.getElementById('capacity-warning').classList.add('hidden');
+
+    await this.render();
+    await this.updateHUD();
+  }
+
+  // ==================== ACTUAL TIME TRACKING ====================
+
+  async completeWithActualTime(actualBucket) {
+    if (!this.pendingCompletionId) return;
+
+    await db.completeTask(this.pendingCompletionId, actualBucket);
+    this.pendingCompletionId = null;
+    document.getElementById('actual-time-modal').classList.add('hidden');
+
+    await this.render();
+    await this.updateHUD();
+  }
+
+  async skipActualTime() {
+    if (!this.pendingCompletionId) return;
+
+    await db.updateItem(this.pendingCompletionId, {
+      status: 'done',
+      isTop3: false,
+      top3Order: null
+    });
+    this.pendingCompletionId = null;
+    document.getElementById('actual-time-modal').classList.add('hidden');
 
     await this.render();
     await this.updateHUD();
@@ -496,14 +772,95 @@ class BattlePlanApp {
     this.editingItemId = id;
     const item = await db.getItem(id);
 
+    // Set basic fields
     document.getElementById('edit-text').value = item.text;
+    document.getElementById('edit-next-action').value = item.next_action || '';
     document.getElementById('edit-scheduled').value = item.scheduled_for_date || '';
     document.getElementById('edit-due').value = item.dueDate || '';
-    document.getElementById('edit-estimate').value = item.estimate || '';
-    document.getElementById('edit-tag').value = item.tag || '';
+
+    // Store edit state
+    this.editState = {
+      A: item.A,
+      C: item.C,
+      E: item.E,
+      L: item.L,
+      M: item.M,
+      T: item.T,
+      tag: item.tag,
+      estimate_bucket: item.estimate_bucket,
+      confidence: item.confidence
+    };
+
+    // Update all button states
+    this.updateEditModalButtons();
 
     document.getElementById('edit-modal').classList.remove('hidden');
     document.getElementById('edit-text').focus();
+  }
+
+  updateEditModalButtons() {
+    // Update tag buttons
+    document.querySelectorAll('.tag-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tag === this.editState.tag);
+    });
+
+    // Update score buttons
+    ['A', 'C', 'E', 'L', 'M', 'T'].forEach(field => {
+      const container = document.querySelector(`.score-buttons[data-field="${field}"]`);
+      if (container) {
+        container.querySelectorAll('button').forEach(btn => {
+          btn.classList.toggle('active', parseInt(btn.dataset.value) === this.editState[field]);
+        });
+      }
+    });
+
+    // Update bucket buttons
+    document.querySelectorAll('.bucket-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.bucket) === this.editState.estimate_bucket);
+    });
+
+    // Update confidence buttons
+    document.querySelectorAll('.confidence-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.confidence === this.editState.confidence);
+    });
+  }
+
+  selectTag(tag) {
+    this.editState.tag = this.editState.tag === tag ? null : tag;
+    this.updateEditModalButtons();
+  }
+
+  selectScore(field, value) {
+    this.editState[field] = this.editState[field] === value ? null : value;
+    this.updateEditModalButtons();
+  }
+
+  selectBucket(bucket) {
+    this.editState.estimate_bucket = this.editState.estimate_bucket === bucket ? null : bucket;
+    this.updateEditModalButtons();
+  }
+
+  selectConfidence(confidence) {
+    this.editState.confidence = this.editState.confidence === confidence ? null : confidence;
+    this.updateEditModalButtons();
+  }
+
+  async applyPreset(presetKey) {
+    const presets = db.getPresets();
+    const preset = presets[presetKey];
+    if (!preset) return;
+
+    // Apply preset values to edit state
+    if (preset.A !== undefined) this.editState.A = preset.A;
+    if (preset.C !== undefined) this.editState.C = preset.C;
+    if (preset.E !== undefined) this.editState.E = preset.E;
+    if (preset.L !== undefined) this.editState.L = preset.L;
+    if (preset.M !== undefined) this.editState.M = preset.M;
+    if (preset.T !== undefined) this.editState.T = preset.T;
+    if (preset.estimate_bucket !== undefined) this.editState.estimate_bucket = preset.estimate_bucket;
+    if (preset.confidence !== undefined) this.editState.confidence = preset.confidence;
+
+    this.updateEditModalButtons();
   }
 
   closeEditModal() {
@@ -516,10 +873,21 @@ class BattlePlanApp {
 
     const updates = {
       text: document.getElementById('edit-text').value.trim(),
+      next_action: document.getElementById('edit-next-action').value.trim() || null,
       scheduled_for_date: document.getElementById('edit-scheduled').value || null,
       dueDate: document.getElementById('edit-due').value || null,
-      estimate: parseInt(document.getElementById('edit-estimate').value) || null,
-      tag: document.getElementById('edit-tag').value || null
+      // ACE+LMT scores
+      A: this.editState.A,
+      C: this.editState.C,
+      E: this.editState.E,
+      L: this.editState.L,
+      M: this.editState.M,
+      T: this.editState.T,
+      // Tag
+      tag: this.editState.tag,
+      // Time planning
+      estimate_bucket: this.editState.estimate_bucket,
+      confidence: this.editState.confidence
     };
 
     await db.updateItem(this.editingItemId, updates);
@@ -745,13 +1113,19 @@ class BattlePlanApp {
     this.stopFocus();
 
     if (this.selectedItemId) {
+      const item = await db.getItem(this.selectedItemId);
       const markDone = confirm('Focus session complete! Mark task as done?');
       if (markDone) {
-        await db.updateItem(this.selectedItemId, {
-          status: 'done',
-          isTop3: false,
-          top3Order: null
-        });
+        if (item.estimate_bucket) {
+          this.pendingCompletionId = this.selectedItemId;
+          document.getElementById('actual-time-modal').classList.remove('hidden');
+        } else {
+          await db.updateItem(this.selectedItemId, {
+            status: 'done',
+            isTop3: false,
+            top3Order: null
+          });
+        }
       }
     }
 
