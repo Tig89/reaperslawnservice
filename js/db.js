@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'BattlePlanDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 class BattlePlanDB {
   constructor() {
@@ -31,6 +31,7 @@ class BattlePlanDB {
           itemStore.createIndex('status', 'status', { unique: false });
           itemStore.createIndex('created', 'created', { unique: false });
           itemStore.createIndex('isTop3', 'isTop3', { unique: false });
+          itemStore.createIndex('scheduled_for_date', 'scheduled_for_date', { unique: false });
         }
 
         // Routines store - reusable checklists
@@ -51,6 +52,18 @@ class BattlePlanDB {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
+  // ==================== DATE HELPERS ====================
+
+  getToday() {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  getTomorrow() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  }
+
   // ==================== ITEMS ====================
 
   async addItem(text) {
@@ -61,6 +74,7 @@ class BattlePlanDB {
       status: 'inbox',
       created: new Date().toISOString(),
       dueDate: null,
+      scheduled_for_date: null,
       estimate: null,
       tag: null,
       isTop3: false,
@@ -125,23 +139,42 @@ class BattlePlanDB {
     });
   }
 
-  async getItemsByStatus(status) {
-    await this.ready;
-    const allItems = await this.getAllItems();
-    return allItems.filter(item => item.status === status);
+  // ==================== VIEW QUERIES ====================
+
+  async getInboxItems() {
+    const items = await this.getAllItems();
+    return items.filter(i => i.status === 'inbox');
   }
 
   async getTodayItems() {
-    await this.ready;
-    const allItems = await this.getAllItems();
-    return allItems.filter(item => item.status === 'today' && item.status !== 'done');
+    const items = await this.getAllItems();
+    const today = this.getToday();
+    return items.filter(i =>
+      i.status !== 'done' && (
+        i.status === 'today' ||
+        i.scheduled_for_date === today ||
+        (i.scheduled_for_date && i.scheduled_for_date < today) // overdue
+      )
+    );
+  }
+
+  async getTomorrowItems() {
+    const items = await this.getAllItems();
+    const tomorrow = this.getTomorrow();
+    return items.filter(i =>
+      i.status !== 'done' && i.scheduled_for_date === tomorrow
+    );
+  }
+
+  async getItemsByStatus(status) {
+    const items = await this.getAllItems();
+    return items.filter(i => i.status === status);
   }
 
   async getTop3Items() {
-    await this.ready;
-    const allItems = await this.getAllItems();
-    return allItems
-      .filter(item => item.isTop3 && item.status !== 'done')
+    const items = await this.getAllItems();
+    return items
+      .filter(i => i.isTop3 && i.status !== 'done')
       .sort((a, b) => (a.top3Order || 0) - (b.top3Order || 0));
   }
 
@@ -155,6 +188,92 @@ class BattlePlanDB {
       order = order ?? currentTop3.length;
     }
     return this.updateItem(id, { isTop3, top3Order: isTop3 ? order : null });
+  }
+
+  // ==================== SCHEDULING ====================
+
+  async setTomorrow(id) {
+    const tomorrow = this.getTomorrow();
+    return this.updateItem(id, {
+      status: 'tomorrow',
+      scheduled_for_date: tomorrow
+    });
+  }
+
+  async setToday(id) {
+    return this.updateItem(id, {
+      status: 'today',
+      scheduled_for_date: null
+    });
+  }
+
+  // ==================== ROLLOVER (Run on app load) ====================
+
+  async runRollover() {
+    await this.ready;
+    const items = await this.getAllItems();
+    const today = this.getToday();
+    let overdueCount = 0;
+
+    for (const item of items) {
+      // Items scheduled for past dates become overdue (shown in Today)
+      if (item.scheduled_for_date &&
+          item.scheduled_for_date < today &&
+          item.status !== 'done') {
+        overdueCount++;
+      }
+    }
+
+    return { overdueCount };
+  }
+
+  // Check if item is overdue
+  isOverdue(item) {
+    if (!item.scheduled_for_date || item.status === 'done') return false;
+    return item.scheduled_for_date < this.getToday();
+  }
+
+  // ==================== STATS ====================
+
+  async getTodayStats() {
+    const items = await this.getAllItems();
+    const today = this.getToday();
+
+    const todayItems = items.filter(i =>
+      i.status !== 'done' && (
+        i.status === 'today' ||
+        i.scheduled_for_date === today ||
+        (i.scheduled_for_date && i.scheduled_for_date < today)
+      )
+    );
+
+    const top3Items = todayItems.filter(i => i.isTop3);
+    const overdueItems = items.filter(i =>
+      i.status !== 'done' &&
+      i.scheduled_for_date &&
+      i.scheduled_for_date < today
+    );
+
+    return {
+      totalTasks: todayItems.length,
+      top3Count: top3Items.length,
+      totalMinutes: todayItems.reduce((sum, i) => sum + (i.estimate || 0), 0),
+      top3Minutes: top3Items.reduce((sum, i) => sum + (i.estimate || 0), 0),
+      overdueCount: overdueItems.length
+    };
+  }
+
+  // ==================== SEARCH ====================
+
+  async searchItems(query, status = null) {
+    const items = await this.getAllItems();
+    const q = query.toLowerCase().trim();
+
+    return items.filter(item => {
+      const matchesText = item.text.toLowerCase().includes(q);
+      const matchesStatus = status === null || item.status === status;
+      return matchesText && matchesStatus;
+    });
   }
 
   // ==================== ROUTINES ====================
@@ -302,12 +421,16 @@ class BattlePlanDB {
     await clearStore('routines');
     await clearStore('settings');
 
-    // Import items
+    // Import items (add scheduled_for_date if missing)
     for (const item of (data.items || [])) {
+      const itemWithDefaults = {
+        scheduled_for_date: null,
+        ...item
+      };
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('items', 'readwrite');
         const store = tx.objectStore('items');
-        const request = store.add(item);
+        const request = store.add(itemWithDefaults);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
       });

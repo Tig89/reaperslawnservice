@@ -15,18 +15,42 @@
 </head>
 <body>
   <div id="app">
-    <!-- Header -->
+    <!-- Header with HUD -->
     <header id="header">
-      <h1>Battle Plan</h1>
-      <button id="menu-btn" aria-label="Menu">&#9776;</button>
+      <div class="header-top">
+        <h1>Battle Plan</h1>
+      </div>
+      <!-- HUD - Today Stats -->
+      <div id="hud" class="hud hidden">
+        <span class="hud-item" id="hud-tasks"><strong id="hud-task-count">0</strong> tasks</span>
+        <span class="hud-item" id="hud-top3"><strong id="hud-top3-count">0</strong>/3 locked</span>
+        <span class="hud-item" id="hud-time"><strong id="hud-minutes">0</strong> min</span>
+        <span class="hud-item hud-overdue hidden" id="hud-overdue"><strong id="hud-overdue-count">0</strong> overdue</span>
+      </div>
     </header>
 
-    <!-- Navigation -->
+    <!-- Search Bar -->
+    <div id="search-bar" class="search-bar">
+      <input type="text" id="search-input" placeholder="Search tasks...">
+      <label class="search-all-toggle">
+        <input type="checkbox" id="search-all-checkbox">
+        <span>All</span>
+      </label>
+    </div>
+
+    <!-- Navigation (scrollable) -->
     <nav id="nav">
-      <button class="nav-btn active" data-page="inbox">Inbox</button>
-      <button class="nav-btn" data-page="today">Today</button>
-      <button class="nav-btn" data-page="routines">Routines</button>
-      <button class="nav-btn" data-page="settings">&#9881;</button>
+      <div class="nav-scroll">
+        <button class="nav-btn active" data-page="inbox">Inbox</button>
+        <button class="nav-btn" data-page="today">Today</button>
+        <button class="nav-btn" data-page="tomorrow">Tomorrow</button>
+        <button class="nav-btn" data-page="next">Next</button>
+        <button class="nav-btn" data-page="waiting">Waiting</button>
+        <button class="nav-btn" data-page="someday">Someday</button>
+        <button class="nav-btn" data-page="done">Done</button>
+        <button class="nav-btn" data-page="routines">Routines</button>
+        <button class="nav-btn" data-page="settings">&#9881;</button>
+      </div>
     </nav>
 
     <!-- Pages Container -->
@@ -39,6 +63,7 @@
         </div>
         <div class="keyboard-hints">
           <span><kbd>T</kbd> Today</span>
+          <span><kbd>M</kbd> Tomorrow</span>
           <span><kbd>N</kbd> Next</span>
           <span><kbd>W</kbd> Waiting</span>
           <span><kbd>S</kbd> Someday</span>
@@ -50,10 +75,6 @@
       <!-- Today Page -->
       <section id="page-today" class="page">
         <div class="today-header">
-          <div class="today-stats">
-            <span id="today-total">0 min total</span>
-            <span id="top3-total">0 min Top 3</span>
-          </div>
           <button id="start-focus-btn" class="btn-primary">Start Focus</button>
         </div>
         <div id="top3-section">
@@ -64,6 +85,31 @@
           <h3>Other Today Items</h3>
           <ul id="today-list" class="item-list"></ul>
         </div>
+      </section>
+
+      <!-- Tomorrow Page -->
+      <section id="page-tomorrow" class="page">
+        <ul id="tomorrow-list" class="item-list"></ul>
+      </section>
+
+      <!-- Next Page -->
+      <section id="page-next" class="page">
+        <ul id="next-list" class="item-list"></ul>
+      </section>
+
+      <!-- Waiting Page -->
+      <section id="page-waiting" class="page">
+        <ul id="waiting-list" class="item-list"></ul>
+      </section>
+
+      <!-- Someday Page -->
+      <section id="page-someday" class="page">
+        <ul id="someday-list" class="item-list"></ul>
+      </section>
+
+      <!-- Done Page -->
+      <section id="page-done" class="page">
+        <ul id="done-list" class="item-list"></ul>
       </section>
 
       <!-- Routines Page -->
@@ -95,7 +141,7 @@
         </div>
         <div class="settings-section">
           <h3>About</h3>
-          <p>Battle Plan v1.0</p>
+          <p>Battle Plan v1.1</p>
           <p>A simple daily life organizer.</p>
           <p>Works offline. Your data stays on your device.</p>
         </div>
@@ -119,6 +165,10 @@
       <div class="modal-content">
         <h3>Edit Item</h3>
         <input type="text" id="edit-text" placeholder="Item text">
+        <div class="edit-row">
+          <label>Scheduled For</label>
+          <input type="date" id="edit-scheduled">
+        </div>
         <div class="edit-row">
           <label>Due Date</label>
           <input type="date" id="edit-due">

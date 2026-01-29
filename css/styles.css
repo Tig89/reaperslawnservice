@@ -22,6 +22,7 @@
   --success: #4ecca3;
   --warning: #ffc107;
   --danger: #e94560;
+  --overdue: #ff4757;
   --border-radius: 12px;
   --spacing-xs: 4px;
   --spacing-sm: 8px;
@@ -32,8 +33,8 @@
   --font-size-md: 1rem;
   --font-size-lg: 1.25rem;
   --font-size-xl: 1.5rem;
-  --header-height: 56px;
-  --nav-height: 56px;
+  --header-height: auto;
+  --nav-height: 48px;
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -64,13 +65,16 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: var(--header-height);
+  height: 48px;
   padding: 0 var(--spacing-md);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 #header h1 {
@@ -79,58 +83,142 @@ body {
   color: var(--accent);
 }
 
-#menu-btn {
+/* ==================== HUD ==================== */
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: rgba(0, 0, 0, 0.2);
+  font-size: var(--font-size-sm);
+}
+
+.hud.hidden {
   display: none;
-  background: none;
-  border: none;
+}
+
+.hud-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+}
+
+.hud-item strong {
   color: var(--text-primary);
-  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.hud-overdue {
+  color: var(--overdue);
+}
+
+.hud-overdue strong {
+  color: var(--overdue);
+}
+
+.hud-overdue.hidden {
+  display: none;
+}
+
+/* ==================== SEARCH BAR ==================== */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.search-bar input[type="text"] {
+  flex: 1;
+  height: 40px;
+  padding: 0 var(--spacing-md);
+  background: var(--bg-card);
+  border: none;
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.search-bar input[type="text"]:focus {
+  outline: 2px solid var(--accent);
+}
+
+.search-bar input[type="text"]::placeholder {
+  color: var(--text-muted);
+}
+
+.search-all-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
   cursor: pointer;
+  white-space: nowrap;
+}
+
+.search-all-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
 }
 
 /* ==================== NAVIGATION ==================== */
 #nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  display: flex;
-  justify-content: space-around;
-  height: calc(var(--nav-height) + var(--safe-area-bottom));
-  padding-bottom: var(--safe-area-bottom);
+  position: sticky;
+  top: 48px;
+  z-index: 99;
   background: var(--bg-secondary);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  max-width: 600px;
-  margin: 0 auto;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.nav-scroll {
+  display: flex;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.nav-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-btn {
-  flex: 1;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  height: var(--nav-height);
+  padding: 0 var(--spacing-md);
   background: none;
   border: none;
+  border-bottom: 3px solid transparent;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: color 0.2s, background 0.2s;
-  padding: var(--spacing-sm);
+  transition: color 0.2s, border-color 0.2s;
+  white-space: nowrap;
 }
 
-.nav-btn:hover,
+.nav-btn:hover {
+  color: var(--text-primary);
+}
+
 .nav-btn.active {
   color: var(--accent);
-  background: rgba(233, 69, 96, 0.1);
+  border-bottom-color: var(--accent);
 }
 
 /* ==================== MAIN CONTENT ==================== */
 #main {
   flex: 1;
   padding: var(--spacing-md);
-  padding-bottom: calc(var(--nav-height) + var(--spacing-xl) + var(--safe-area-bottom));
+  padding-bottom: var(--spacing-xl);
 }
 
 .page {
@@ -266,6 +354,10 @@ kbd {
   border-left-color: var(--success);
 }
 
+.item.status-tomorrow {
+  border-left-color: #3498db;
+}
+
 .item.status-next {
   border-left-color: var(--warning);
 }
@@ -287,9 +379,32 @@ kbd {
   text-decoration: line-through;
 }
 
+.item.overdue {
+  border-left-color: var(--overdue) !important;
+}
+
+.item-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
 .item-text {
+  flex: 1;
   font-size: var(--font-size-md);
   word-break: break-word;
+}
+
+.overdue-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--overdue);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: white;
+  text-transform: uppercase;
 }
 
 .item-meta {
@@ -309,6 +424,10 @@ kbd {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.item-scheduled {
+  color: #3498db;
 }
 
 /* ==================== STATUS PILLS ==================== */
@@ -343,6 +462,10 @@ kbd {
 
 .pill.pill-today.active {
   background: var(--success);
+}
+
+.pill.pill-tomorrow.active {
+  background: #3498db;
 }
 
 .pill.pill-next.active {
@@ -415,21 +538,10 @@ kbd {
 .today-header {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--spacing-md);
   margin-bottom: var(--spacing-lg);
-  padding: var(--spacing-md);
-  background: var(--bg-card);
-  border-radius: var(--border-radius);
-}
-
-.today-stats {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
 }
 
 #today-section,
@@ -751,6 +863,7 @@ kbd {
 /* ==================== SCROLLBAR ==================== */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -783,12 +896,15 @@ kbd {
   .modal-actions button {
     width: 100%;
   }
+
+  .hud {
+    font-size: 0.75rem;
+  }
 }
 
 @media (min-width: 601px) {
-  #nav {
-    left: 50%;
-    transform: translateX(-50%);
-    width: 600px;
+  #app {
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
   }
 }
