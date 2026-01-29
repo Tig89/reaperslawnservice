@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#16213e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Battle Plan - Simple daily life organizer">
+  <title>Battle Plan</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <h1>Battle Plan</h1>
+      <button id="menu-btn" aria-label="Menu">&#9776;</button>
+    </header>
+
+    <!-- Navigation -->
+    <nav id="nav">
+      <button class="nav-btn active" data-page="inbox">Inbox</button>
+      <button class="nav-btn" data-page="today">Today</button>
+      <button class="nav-btn" data-page="routines">Routines</button>
+      <button class="nav-btn" data-page="settings">&#9881;</button>
+    </nav>
+
+    <!-- Pages Container -->
+    <main id="main">
+      <!-- Inbox Page -->
+      <section id="page-inbox" class="page active">
+        <div class="input-area">
+          <input type="text" id="inbox-input" placeholder="What's on your mind? (Enter to add)" autocomplete="off">
+          <button id="inbox-add-btn">+</button>
+        </div>
+        <div class="keyboard-hints">
+          <span><kbd>T</kbd> Today</span>
+          <span><kbd>N</kbd> Next</span>
+          <span><kbd>W</kbd> Waiting</span>
+          <span><kbd>S</kbd> Someday</span>
+          <span><kbd>D</kbd> Done</span>
+        </div>
+        <ul id="inbox-list" class="item-list"></ul>
+      </section>
+
+      <!-- Today Page -->
+      <section id="page-today" class="page">
+        <div class="today-header">
+          <div class="today-stats">
+            <span id="today-total">0 min total</span>
+            <span id="top3-total">0 min Top 3</span>
+          </div>
+          <button id="start-focus-btn" class="btn-primary">Start Focus</button>
+        </div>
+        <div id="top3-section">
+          <h3>Top 3 Priorities <span id="top3-count">(0/3)</span></h3>
+          <ul id="top3-list" class="item-list top3"></ul>
+        </div>
+        <div id="today-section">
+          <h3>Other Today Items</h3>
+          <ul id="today-list" class="item-list"></ul>
+        </div>
+      </section>
+
+      <!-- Routines Page -->
+      <section id="page-routines" class="page">
+        <div class="input-area">
+          <input type="text" id="routine-name-input" placeholder="New routine name...">
+          <button id="add-routine-btn">+</button>
+        </div>
+        <ul id="routines-list" class="routines-list"></ul>
+      </section>
+
+      <!-- Settings Page -->
+      <section id="page-settings" class="page">
+        <h2>Settings</h2>
+        <div class="settings-section">
+          <h3>Data Backup</h3>
+          <button id="export-btn" class="btn-secondary">Export JSON</button>
+          <button id="import-btn" class="btn-secondary">Import JSON</button>
+          <input type="file" id="import-file" accept=".json" hidden>
+        </div>
+        <div class="settings-section">
+          <h3>Focus Timer Defaults</h3>
+          <div class="timer-options">
+            <button class="timer-preset" data-minutes="25">25 min</button>
+            <button class="timer-preset" data-minutes="50">50 min</button>
+            <button class="timer-preset" data-minutes="0">Custom</button>
+          </div>
+          <input type="number" id="custom-timer" placeholder="Minutes" min="1" max="180" hidden>
+        </div>
+        <div class="settings-section">
+          <h3>About</h3>
+          <p>Battle Plan v1.0</p>
+          <p>A simple daily life organizer.</p>
+          <p>Works offline. Your data stays on your device.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Focus Mode Overlay -->
+    <div id="focus-overlay" class="overlay hidden">
+      <div class="focus-content">
+        <h2 id="focus-task-name">Task Name</h2>
+        <div id="focus-timer">25:00</div>
+        <div class="focus-controls">
+          <button id="focus-pause-btn">Pause</button>
+          <button id="focus-stop-btn">Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Edit Modal -->
+    <div id="edit-modal" class="overlay hidden">
+      <div class="modal-content">
+        <h3>Edit Item</h3>
+        <input type="text" id="edit-text" placeholder="Item text">
+        <div class="edit-row">
+          <label>Due Date</label>
+          <input type="date" id="edit-due">
+        </div>
+        <div class="edit-row">
+          <label>Estimate (min)</label>
+          <input type="number" id="edit-estimate" min="1" max="480" placeholder="Minutes">
+        </div>
+        <div class="edit-row">
+          <label>Tag</label>
+          <select id="edit-tag">
+            <option value="">None</option>
+            <option value="Home">Home</option>
+            <option value="Army">Army</option>
+            <option value="Business">Business</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button id="edit-save-btn" class="btn-primary">Save</button>
+          <button id="edit-delete-btn" class="btn-danger">Delete</button>
+          <button id="edit-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Routine Edit Modal -->
+    <div id="routine-modal" class="overlay hidden">
+      <div class="modal-content">
+        <h3 id="routine-modal-title">Edit Routine</h3>
+        <input type="text" id="routine-edit-name" placeholder="Routine name">
+        <div class="routine-items-edit">
+          <div class="input-area">
+            <input type="text" id="routine-item-input" placeholder="Add checklist item...">
+            <button id="routine-item-add-btn">+</button>
+          </div>
+          <ul id="routine-items-list"></ul>
+        </div>
+        <div class="modal-actions">
+          <button id="routine-save-btn" class="btn-primary">Save</button>
+          <button id="routine-delete-btn" class="btn-danger">Delete</button>
+          <button id="routine-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/db.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed:', err));
+    }
+  </script>
+</body>
+</html>
