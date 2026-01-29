@@ -324,8 +324,8 @@ class BattlePlanApp {
 
     const list = document.getElementById('inbox-list');
 
-    // Sort newest first
-    const sorted = items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Sort by priority (rated items first, then by score, then newest)
+    const sorted = this.sortByPriority(items);
 
     if (sorted.length === 0) {
       const msg = this.searchQuery ? 'No matching items' : 'Inbox is empty. Add something above!';
@@ -343,7 +343,9 @@ class BattlePlanApp {
 
     const top3Items = items.filter(i => i.isTop3)
       .sort((a, b) => (a.top3Order || 0) - (b.top3Order || 0));
-    const otherItems = items.filter(i => !i.isTop3);
+
+    // Sort other items by priority score + time sensitivity
+    const otherItems = this.sortByPriority(items.filter(i => !i.isTop3));
 
     document.getElementById('top3-count').textContent = `(${top3Items.length}/3)`;
 
@@ -385,7 +387,9 @@ class BattlePlanApp {
       return;
     }
 
-    list.innerHTML = items.map(item => this.renderItem(item, { showPills: true })).join('');
+    // Sort by priority score + time sensitivity
+    const sorted = this.sortByPriority(items);
+    list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
     this.bindItemEvents();
   }
 
@@ -401,7 +405,8 @@ class BattlePlanApp {
       return;
     }
 
-    const sorted = items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Sort by priority score + time sensitivity
+    const sorted = this.sortByPriority(items);
     list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
     this.bindItemEvents();
   }
@@ -1191,6 +1196,70 @@ class BattlePlanApp {
     }
 
     e.target.value = '';
+  }
+
+  // ==================== SORTING ====================
+
+  sortByPriority(items) {
+    const today = new Date().toISOString().split('T')[0];
+
+    return items.sort((a, b) => {
+      // Calculate effective priority for each item
+      const scoreA = this.calculateEffectivePriority(a, today);
+      const scoreB = this.calculateEffectivePriority(b, today);
+
+      // Higher score = higher priority (sort descending)
+      if (scoreB !== scoreA) return scoreB - scoreA;
+
+      // Tie-breaker: newer items first
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+  }
+
+  calculateEffectivePriority(item, today) {
+    let score = 0;
+
+    // Base ACE+LMT score (0-27 range)
+    const scores = db.calculateScores(item);
+    if (scores.priority_score !== null) {
+      score = scores.priority_score;
+    }
+
+    // Time sensitivity bonuses
+    const isOverdue = item.scheduled_for_date && item.scheduled_for_date < today && item.status !== 'done';
+    const hasDueDate = item.dueDate;
+
+    // Overdue items get big boost (+20)
+    if (isOverdue) {
+      score += 20;
+    }
+
+    // Due date approaching (within 3 days) gets boost
+    if (hasDueDate) {
+      const dueDate = new Date(item.dueDate);
+      const todayDate = new Date(today);
+      const daysUntilDue = Math.ceil((dueDate - todayDate) / (1000 * 60 * 60 * 24));
+
+      if (daysUntilDue <= 0) {
+        score += 15; // Due today or past due
+      } else if (daysUntilDue <= 1) {
+        score += 10; // Due tomorrow
+      } else if (daysUntilDue <= 3) {
+        score += 5; // Due within 3 days
+      }
+    }
+
+    // URGENT (C=5) gets extra visibility even without full rating
+    if (item.C === 5) {
+      score += 10;
+    }
+
+    // Rated items get slight preference over unrated
+    if (db.isRated(item)) {
+      score += 1;
+    }
+
+    return score;
   }
 
   // ==================== UTILITIES ====================
