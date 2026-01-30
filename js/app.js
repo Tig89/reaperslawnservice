@@ -484,12 +484,17 @@ class BattlePlanApp {
       `;
     }
 
-    let top3Html = '';
-    if (showTop3Toggle && item.status === 'today') {
-      top3Html = `<button class="top3-toggle ${item.isTop3 ? 'in-top3' : ''}">${item.isTop3 ? '- Top 3' : '+ Top 3'}</button>`;
-    }
-    if (isTop3) {
-      top3Html = `<button class="top3-toggle in-top3">- Top 3</button>`;
+    // Action buttons for Today view (Top 3 toggle + Done button)
+    let actionsHtml = '';
+    if (showTop3Toggle || isTop3) {
+      const top3BtnClass = (item.isTop3 || isTop3) ? 'in-top3' : '';
+      const top3BtnText = (item.isTop3 || isTop3) ? '- Top 3' : '+ Top 3';
+      actionsHtml = `
+        <div class="item-actions">
+          <button class="done-btn">Done</button>
+          <button class="top3-toggle ${top3BtnClass}">${top3BtnText}</button>
+        </div>
+      `;
     }
 
     return `
@@ -505,7 +510,7 @@ class BattlePlanApp {
           ${metaHtml}
         </div>
         ${pillsHtml}
-        ${top3Html ? `<div class="status-pills">${top3Html}</div>` : ''}
+        ${actionsHtml}
       </li>
     `;
   }
@@ -552,6 +557,15 @@ class BattlePlanApp {
           this.render();
           this.updateHUD();
         }
+      });
+    });
+
+    // Done button
+    document.querySelectorAll('.done-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const itemId = btn.closest('.item').dataset.id;
+        await this.setItemStatus(itemId, 'done');
       });
     });
   }
