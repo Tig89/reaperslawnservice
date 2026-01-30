@@ -450,10 +450,6 @@ class BattlePlanApp {
       metaHtml += `<span class="item-bucket">${bucketLabel}</span>`;
     }
 
-    if (item.confidence) {
-      metaHtml += `<span class="item-confidence ${item.confidence}">${item.confidence}</span>`;
-    }
-
     if (item.tag) {
       metaHtml += `<span class="tag tag-${item.tag}">${item.tag}</span>`;
     }
@@ -489,7 +485,7 @@ class BattlePlanApp {
       `;
     }
 
-    // Action buttons for Today view (Top 3 toggle + Done button)
+    // Action buttons for Today view (Done, Top 3 toggle, Reschedule)
     let actionsHtml = '';
     if (showTop3Toggle || isTop3) {
       const top3BtnClass = (item.isTop3 || isTop3) ? 'in-top3' : '';
@@ -497,6 +493,7 @@ class BattlePlanApp {
       actionsHtml = `
         <div class="item-actions">
           <button class="done-btn">Done</button>
+          <button class="tomorrow-btn">→ Tomorrow</button>
           <button class="top3-toggle ${top3BtnClass}">${top3BtnText}</button>
         </div>
       `;
@@ -571,6 +568,17 @@ class BattlePlanApp {
         e.stopPropagation();
         const itemId = btn.closest('.item').dataset.id;
         await this.setItemStatus(itemId, 'done');
+      });
+    });
+
+    // Tomorrow button (reschedule)
+    document.querySelectorAll('.tomorrow-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const itemId = btn.closest('.item').dataset.id;
+        await db.setTomorrow(itemId);
+        await this.render();
+        await this.updateHUD();
       });
     });
   }

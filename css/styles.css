@@ -559,6 +559,26 @@ body {
   transform: scale(0.95);
 }
 
+.tomorrow-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: #3498db;
+  border: none;
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: white;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tomorrow-btn:hover {
+  background: #2980b9;
+}
+
+.tomorrow-btn:active {
+  transform: scale(0.95);
+}
+
 .top3-toggle {
   padding: var(--spacing-xs) var(--spacing-sm);
   background: var(--accent);
