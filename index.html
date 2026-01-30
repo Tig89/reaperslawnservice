@@ -305,6 +305,7 @@
         <!-- Time Planning -->
         <div class="edit-section">
           <label>Time Estimate</label>
+          <p class="section-desc">How long will this take? (pick closest bucket)</p>
           <div class="bucket-buttons">
             <button class="bucket-btn" data-bucket="15">15m</button>
             <button class="bucket-btn" data-bucket="30">30m</button>
@@ -317,11 +318,13 @@
 
         <div class="edit-section">
           <label>Confidence</label>
+          <p class="section-desc">How sure are you about that estimate?</p>
           <div class="confidence-buttons">
             <button class="confidence-btn" data-confidence="high">High</button>
             <button class="confidence-btn" data-confidence="medium">Medium</button>
             <button class="confidence-btn" data-confidence="low">Low</button>
           </div>
+          <p class="score-hint">High = done this before, know exactly. Medium = rough idea. Low = new territory, could balloon. Lower confidence adds more buffer time to your daily capacity.</p>
         </div>
 
         <div class="edit-row">
