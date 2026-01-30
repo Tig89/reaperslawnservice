@@ -418,7 +418,10 @@ class BattlePlanApp {
     const selectedClass = item.id === this.selectedItemId ? 'selected' : '';
     const isOverdue = db.isOverdue(item);
     const overdueClass = isOverdue ? 'overdue' : '';
-    const dateStr = new Date(item.created_at).toLocaleDateString();
+
+    // Handle date display - fallback to created field for older items
+    const createdDate = new Date(item.created_at || item.created);
+    const dateStr = isNaN(createdDate.getTime()) ? '' : createdDate.toLocaleDateString();
 
     // Calculate scores
     const scores = db.calculateScores(item);
@@ -455,7 +458,9 @@ class BattlePlanApp {
       metaHtml += `<span class="tag tag-${item.tag}">${item.tag}</span>`;
     }
 
-    metaHtml += `<span class="item-date">${dateStr}</span>`;
+    if (dateStr) {
+      metaHtml += `<span class="item-date">${dateStr}</span>`;
+    }
 
     if (item.scheduled_for_date) {
       metaHtml += `<span class="item-scheduled">Scheduled: ${item.scheduled_for_date}</span>`;
