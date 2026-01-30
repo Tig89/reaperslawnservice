@@ -1,19 +1,24 @@
 /**
  * Battle Plan - IndexedDB Storage Layer
  * Army-style prioritization with ACE+LMT scoring
+ * Version 4 - With proper Today logic, Top 3 per-day, and tiered sorting
  */
 
 const DB_NAME = 'BattlePlanDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // Constants
 const ESTIMATE_BUCKETS = [15, 30, 60, 90, 120, 180];
 const CONFIDENCE_MULTIPLIERS = { high: 1.1, medium: 1.3, low: 1.6 };
+const CONFIDENCE_LEVELS = ['high', 'medium', 'low'];
+
 const DEFAULT_SETTINGS = {
   timerDefault: 25,
   weekday_capacity_minutes: 180,
   weekend_capacity_minutes: 360,
-  always_plan_slack_percent: 30
+  always_plan_slack_percent: 30,
+  auto_roll_tomorrow_to_today: true,
+  top3_auto_clear_daily: true
 };
 
 class BattlePlanDB {
@@ -34,13 +39,27 @@ class BattlePlanDB {
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
+        const oldVersion = event.oldVersion;
 
+        // Create or update items store
         if (!db.objectStoreNames.contains('items')) {
           const itemStore = db.createObjectStore('items', { keyPath: 'id' });
           itemStore.createIndex('status', 'status', { unique: false });
           itemStore.createIndex('created_at', 'created_at', { unique: false });
           itemStore.createIndex('isTop3', 'isTop3', { unique: false });
           itemStore.createIndex('tag', 'tag', { unique: false });
+          itemStore.createIndex('scheduled_for_date', 'scheduled_for_date', { unique: false });
+          itemStore.createIndex('dueDate', 'dueDate', { unique: false });
+        } else if (oldVersion < 4) {
+          // Add new indexes for v4
+          const tx = event.target.transaction;
+          const itemStore = tx.objectStore('items');
+          if (!itemStore.indexNames.contains('scheduled_for_date')) {
+            itemStore.createIndex('scheduled_for_date', 'scheduled_for_date', { unique: false });
+          }
+          if (!itemStore.indexNames.contains('dueDate')) {
+            itemStore.createIndex('dueDate', 'dueDate', { unique: false });
+          }
         }
 
         if (!db.objectStoreNames.contains('routines')) {
@@ -51,7 +70,6 @@ class BattlePlanDB {
           db.createObjectStore('settings', { keyPath: 'key' });
         }
 
-        // Calibration history store
         if (!db.objectStoreNames.contains('calibration_history')) {
           const calStore = db.createObjectStore('calibration_history', { keyPath: 'id' });
           calStore.createIndex('tag', 'tag', { unique: false });
@@ -94,20 +112,22 @@ class BattlePlanDB {
       tag: null,
       next_action: null,
       // ACE scores
-      A: null, // actual_impact 1-5
-      C: null, // consequences 1-5
-      E: null, // enemy_friction 1-5
+      A: null,
+      C: null,
+      E: null,
       // LMT bonuses
-      L: null, // leverage 0-2
-      M: null, // energy_match 0-2
-      T: null, // time_reality 0-2
+      L: null,
+      M: null,
+      T: null,
       // Time planning
       estimate_bucket: null,
       confidence: null,
       actual_bucket: null,
-      // Top 3
+      // Top 3 (with per-day state)
       isTop3: false,
       top3Order: null,
+      top3Date: null,
+      top3Locked: false,
       // Scheduling
       scheduled_for_date: null,
       dueDate: null,
@@ -178,6 +198,32 @@ class BattlePlanDB {
     });
   }
 
+  // ==================== FULLY RATED PREDICATE ====================
+
+  /**
+   * Strict definition of "fully rated"
+   * A, C, E must be numbers (1-5)
+   * L, M, T must be numbers (0-2, 0 is allowed)
+   * estimate_bucket must be set
+   * confidence must be high|medium|low
+   */
+  isRated(item) {
+    return (
+      typeof item.A === 'number' && item.A >= 1 && item.A <= 5 &&
+      typeof item.C === 'number' && item.C >= 1 && item.C <= 5 &&
+      typeof item.E === 'number' && item.E >= 1 && item.E <= 5 &&
+      typeof item.L === 'number' && item.L >= 0 && item.L <= 2 &&
+      typeof item.M === 'number' && item.M >= 0 && item.M <= 2 &&
+      typeof item.T === 'number' && item.T >= 0 && item.T <= 2 &&
+      typeof item.estimate_bucket === 'number' && item.estimate_bucket > 0 &&
+      CONFIDENCE_LEVELS.includes(item.confidence)
+    );
+  }
+
+  isMonster(item) {
+    return item.estimate_bucket >= 90 || item.confidence === 'low';
+  }
+
   // ==================== SCORING (ACE+LMT) ====================
 
   calculateScores(item) {
@@ -197,35 +243,33 @@ class BattlePlanDB {
 
     if (item.C === 5) badges.push('URGENT');
     if (item.A === 5 && item.C >= 4) badges.push('CRITICAL');
-    if (item.estimate_bucket >= 90 || item.confidence === 'low') badges.push('MONSTER');
+    if (this.isMonster(item)) badges.push('MONSTER');
     if (item.L === 2) badges.push('LEVERAGE');
     if (item.E >= 4) badges.push('FRICTION');
 
     return badges;
   }
 
-  isRated(item) {
-    return item.A != null && item.C != null && item.E != null &&
-           item.L != null && item.M != null && item.T != null &&
-           item.estimate_bucket != null && item.confidence != null;
-  }
-
-  isMonster(item) {
-    return item.estimate_bucket >= 90 || item.confidence === 'low';
-  }
-
   // ==================== TIME PLANNING ====================
 
   async getCalibrationFactor(tag) {
     await this.ready;
-    const history = await this.getCalibrationHistory(tag || 'Other');
+    const effectiveTag = tag || 'Other';
+    const history = await this.getCalibrationHistory(effectiveTag);
 
     if (history.length === 0) return 1.0;
 
-    const ratios = history.map(h => h.actual_bucket / h.estimate_bucket);
+    // Filter out invalid records
+    const validHistory = history.filter(h =>
+      h.estimate_bucket > 0 && h.actual_bucket > 0
+    );
+
+    if (validHistory.length === 0) return 1.0;
+
+    const ratios = validHistory.map(h => h.actual_bucket / h.estimate_bucket);
     const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;
 
-    // Bound to [1.0, 2.0]
+    // Clamp to [1.0, 2.0]
     return Math.max(1.0, Math.min(2.0, avg));
   }
 
@@ -248,6 +292,11 @@ class BattlePlanDB {
 
   async addCalibrationEntry(tag, estimate_bucket, actual_bucket) {
     await this.ready;
+
+    // Skip if invalid data
+    if (!estimate_bucket || estimate_bucket <= 0) return null;
+    if (!actual_bucket || actual_bucket <= 0) return null;
+
     const entry = {
       id: this.generateId(),
       tag: tag || 'Other',
@@ -269,10 +318,11 @@ class BattlePlanDB {
     if (!item.estimate_bucket || !item.confidence) return null;
 
     const multiplier = CONFIDENCE_MULTIPLIERS[item.confidence] || 1.3;
-    const buffered = item.estimate_bucket * multiplier;
     const calibrationFactor = await this.getCalibrationFactor(item.tag);
+    const buffered = item.estimate_bucket * multiplier * calibrationFactor;
 
-    return Math.round(buffered * calibrationFactor);
+    // Round up to nearest 5 minutes
+    return Math.ceil(buffered / 5) * 5;
   }
 
   // ==================== CAPACITY ====================
@@ -286,36 +336,77 @@ class BattlePlanDB {
     return Math.round(capacity * (1 - slackPercent / 100));
   }
 
-  // ==================== TOP 3 SELECTION ====================
+  // ==================== TODAY LOGIC ====================
 
+  /**
+   * Today query logic:
+   * - status === 'today' OR
+   * - scheduled_for_date <= today (and status is not done)
+   * - If scheduled_for_date is null, only shows based on status
+   */
   async getTodayItems() {
     const items = await this.getAllItems();
     const today = this.getToday();
-    return items.filter(i =>
-      i.status !== 'done' && (
-        i.status === 'today' ||
-        i.scheduled_for_date === today ||
-        (i.scheduled_for_date && i.scheduled_for_date < today)
-      )
-    );
+
+    return items.filter(i => {
+      if (i.status === 'done') return false;
+
+      // Explicit today status
+      if (i.status === 'today') return true;
+
+      // Scheduled for today or earlier (overdue)
+      if (i.scheduled_for_date && i.scheduled_for_date <= today) return true;
+
+      return false;
+    });
   }
+
+  /**
+   * Check if an item is overdue
+   * Overdue = scheduled_for_date < today AND not done
+   */
+  isOverdue(item) {
+    if (item.status === 'done') return false;
+    if (!item.scheduled_for_date) return false;
+    return item.scheduled_for_date < this.getToday();
+  }
+
+  // ==================== TOP 3 SELECTION ====================
 
   async getTop3Items() {
     const items = await this.getAllItems();
+    const today = this.getToday();
+
     return items
-      .filter(i => i.isTop3 && i.status !== 'done')
+      .filter(i => i.isTop3 && i.top3Date === today && i.status !== 'done')
       .sort((a, b) => (a.top3Order || 0) - (b.top3Order || 0));
   }
 
+  /**
+   * Suggest Top 3 algorithm:
+   * 1. Keep locked Top 3 items (if still eligible)
+   * 2. Fill remaining slots with highest priority rated tasks
+   * 3. Respect monster rule (max 1 monster)
+   * 4. Respect capacity
+   */
   async suggestTop3() {
+    const today = this.getToday();
     const todayItems = await this.getTodayItems();
     const usableCapacity = await this.getUsableCapacity();
 
-    // Filter to only rated tasks
-    const ratedItems = todayItems.filter(i => this.isRated(i) && i.status !== 'done');
+    // Separate locked vs unlocked Top 3
+    const lockedTop3 = todayItems.filter(i =>
+      i.isTop3 && i.top3Date === today && i.top3Locked && this.isRated(i)
+    );
 
-    // Calculate scores and sort
-    const scored = await Promise.all(ratedItems.map(async item => {
+    // Get rated items not currently locked in Top 3
+    const candidates = todayItems.filter(i =>
+      this.isRated(i) &&
+      !(i.isTop3 && i.top3Date === today && i.top3Locked)
+    );
+
+    // Calculate scores for candidates
+    const scored = await Promise.all(candidates.map(async item => {
       const scores = this.calculateScores(item);
       const bufferedMinutes = await this.getBufferedMinutes(item);
       const isUrgent = item.C === 5;
@@ -330,63 +421,93 @@ class BattlePlanDB {
       return (b.priority_score || 0) - (a.priority_score || 0);
     });
 
-    // Greedy selection
-    const selected = [];
+    // Calculate locked items stats
     let usedMinutes = 0;
     let monsterCount = 0;
+    const selected = [];
 
+    for (const item of lockedTop3) {
+      const buffered = await this.getBufferedMinutes(item);
+      usedMinutes += buffered || 0;
+      if (this.isMonster(item)) monsterCount++;
+      selected.push({ ...item, bufferedMinutes: buffered });
+    }
+
+    // Greedy selection for remaining slots
     for (const item of scored) {
       if (selected.length >= 3) break;
 
+      // Skip if already selected (was locked)
+      if (selected.find(s => s.id === item.id)) continue;
+
       // Monster rule: max 1 MONSTER
-      if (item.isMonster) {
-        if (monsterCount >= 1) continue;
-        monsterCount++;
-      }
+      if (item.isMonster && monsterCount >= 1) continue;
 
       // Capacity check
       if (usedMinutes + item.bufferedMinutes <= usableCapacity) {
         selected.push(item);
         usedMinutes += item.bufferedMinutes;
+        if (item.isMonster) monsterCount++;
       }
     }
 
-    const message = selected.length < 3
-      ? `Only ${selected.length} task${selected.length === 1 ? '' : 's'} fit within today's capacity. Break down a MONSTER or lower estimates.`
-      : null;
+    // Generate appropriate message
+    let message = null;
+    if (selected.length === 0 && scored.length > 0) {
+      // Check if all candidates are monsters
+      const allMonsters = scored.every(s => s.isMonster);
+      if (allMonsters) {
+        message = 'Everything is a MONSTER. Break a task down or lower estimates.';
+      } else {
+        message = 'No tasks fit within capacity. Reduce estimates or increase capacity.';
+      }
+    } else if (selected.length < 3 && scored.length >= 3) {
+      message = `Only ${selected.length} task${selected.length === 1 ? '' : 's'} fit within today's capacity. Break down a MONSTER or lower estimates.`;
+    }
 
     return {
       suggested: selected,
       usedMinutes,
       usableCapacity,
       message,
-      monsterCount
+      monsterCount,
+      lockedCount: lockedTop3.length
     };
   }
 
   async applyTop3Suggestion(suggestion) {
-    // Clear all current Top 3
+    const today = this.getToday();
     const allItems = await this.getAllItems();
+
+    // Clear non-locked Top 3 from today
     for (const item of allItems) {
-      if (item.isTop3) {
-        await this.updateItem(item.id, { isTop3: false, top3Order: null });
+      if (item.isTop3 && item.top3Date === today && !item.top3Locked) {
+        await this.updateItem(item.id, {
+          isTop3: false,
+          top3Order: null,
+          top3Date: null
+        });
       }
     }
 
-    // Set new Top 3
-    for (let i = 0; i < suggestion.suggested.length; i++) {
-      await this.updateItem(suggestion.suggested[i].id, {
+    // Re-normalize order: locked items keep their order, new items fill gaps
+    let order = 0;
+    for (const item of suggestion.suggested) {
+      await this.updateItem(item.id, {
         isTop3: true,
-        top3Order: i
+        top3Order: order,
+        top3Date: today
       });
+      order++;
     }
 
     return suggestion;
   }
 
-  async setTop3(id, isTop3, order = null) {
+  async setTop3(id, isTop3, manualToggle = true) {
     await this.ready;
     const item = await this.getItem(id);
+    const today = this.getToday();
 
     if (isTop3) {
       const currentTop3 = await this.getTop3Items();
@@ -399,19 +520,32 @@ class BattlePlanDB {
       if (isMonster && currentMonsterCount >= 1 && !currentTop3.find(i => i.id === id)) {
         return {
           error: 'MONSTER_LIMIT',
-          message: 'Break it down into smaller steps (subtasks) or lower the estimate bucket.'
+          message: 'Only 1 MONSTER allowed in Top 3. Break it down or remove the other MONSTER first.'
         };
       }
 
       // Check count limit
       if (currentTop3.length >= 3 && !currentTop3.find(i => i.id === id)) {
-        return { error: 'Top 3 is full. Remove an item first.' };
+        return { error: 'TOP3_FULL', message: 'Top 3 is full. Remove an item first.' };
       }
 
-      order = order ?? currentTop3.length;
-    }
+      const order = currentTop3.length;
 
-    return this.updateItem(id, { isTop3, top3Order: isTop3 ? order : null });
+      // If manually toggled, auto-lock
+      return this.updateItem(id, {
+        isTop3: true,
+        top3Order: order,
+        top3Date: today,
+        top3Locked: manualToggle
+      });
+    } else {
+      return this.updateItem(id, {
+        isTop3: false,
+        top3Order: null,
+        top3Date: null,
+        top3Locked: false
+      });
+    }
   }
 
   async getTop3Stats() {
@@ -420,11 +554,13 @@ class BattlePlanDB {
 
     let totalBuffered = 0;
     let monsterCount = 0;
+    let lockedCount = 0;
 
     for (const item of top3Items) {
       const buffered = await this.getBufferedMinutes(item);
       totalBuffered += buffered || 0;
       if (this.isMonster(item)) monsterCount++;
+      if (item.top3Locked) lockedCount++;
     }
 
     const isOverCapacity = totalBuffered > usableCapacity;
@@ -433,6 +569,7 @@ class BattlePlanDB {
       totalBuffered,
       usableCapacity,
       monsterCount,
+      lockedCount,
       isOverCapacity,
       top3Count: top3Items.length
     };
@@ -458,33 +595,18 @@ class BattlePlanDB {
     return items.filter(i => i.status === status);
   }
 
-  isOverdue(item) {
-    if (!item.scheduled_for_date || item.status === 'done') return false;
-    return item.scheduled_for_date < this.getToday();
-  }
-
   // ==================== STATS ====================
 
   async getTodayStats() {
     const items = await this.getAllItems();
     const today = this.getToday();
 
-    const todayItems = items.filter(i =>
-      i.status !== 'done' && (
-        i.status === 'today' ||
-        i.scheduled_for_date === today ||
-        (i.scheduled_for_date && i.scheduled_for_date < today)
-      )
-    );
+    const todayItems = await this.getTodayItems();
 
     const ratedCount = todayItems.filter(i => this.isRated(i)).length;
     const unratedCount = todayItems.length - ratedCount;
 
-    const overdueItems = items.filter(i =>
-      i.status !== 'done' &&
-      i.scheduled_for_date &&
-      i.scheduled_for_date < today
-    );
+    const overdueItems = items.filter(i => this.isOverdue(i));
 
     const top3Stats = await this.getTop3Stats();
 
@@ -502,33 +624,67 @@ class BattlePlanDB {
   async setTomorrow(id) {
     const tomorrow = this.getTomorrow();
     return this.updateItem(id, {
-      status: 'tomorrow',
-      scheduled_for_date: tomorrow
+      scheduled_for_date: tomorrow,
+      // Clear Top 3 when moved out of today
+      isTop3: false,
+      top3Order: null,
+      top3Date: null,
+      top3Locked: false
     });
   }
 
   async setToday(id) {
+    const today = this.getToday();
     return this.updateItem(id, {
       status: 'today',
-      scheduled_for_date: null
+      scheduled_for_date: today
     });
   }
 
-  async runRollover() {
+  // ==================== ROLLOVER / DAILY MAINTENANCE ====================
+
+  async runDailyMaintenance() {
     await this.ready;
-    const items = await this.getAllItems();
     const today = this.getToday();
+    const items = await this.getAllItems();
+
+    const autoRoll = await this.getSetting('auto_roll_tomorrow_to_today', true);
+    const autoClearTop3 = await this.getSetting('top3_auto_clear_daily', true);
+
     let overdueCount = 0;
+    let rolledCount = 0;
+    let clearedTop3Count = 0;
 
     for (const item of items) {
-      if (item.scheduled_for_date &&
-          item.scheduled_for_date < today &&
-          item.status !== 'done') {
+      // Count overdue
+      if (this.isOverdue(item)) {
         overdueCount++;
+      }
+
+      // Auto-roll tomorrow to today
+      if (autoRoll && item.scheduled_for_date && item.scheduled_for_date < today && item.status !== 'done') {
+        // Already overdue, stays in today view automatically
+      }
+
+      // Clear stale Top 3 (from previous days)
+      if (autoClearTop3 && item.isTop3 && item.top3Date && item.top3Date !== today) {
+        if (!item.top3Locked) {
+          await this.updateItem(item.id, {
+            isTop3: false,
+            top3Order: null,
+            top3Date: null
+          });
+          clearedTop3Count++;
+        }
       }
     }
 
-    return { overdueCount };
+    return { overdueCount, rolledCount, clearedTop3Count };
+  }
+
+  // Alias for backward compatibility
+  async runRollover() {
+    return this.runDailyMaintenance();
   }
 
   // ==================== TASK COMPLETION ====================
@@ -546,7 +702,9 @@ class BattlePlanDB {
       status: 'done',
       actual_bucket,
       isTop3: false,
-      top3Order: null
+      top3Order: null,
+      top3Date: null,
+      top3Locked: false
     });
   }
 
@@ -682,10 +840,15 @@ class BattlePlanDB {
     const routine = await this.getRoutine(id);
     if (!routine) return [];
 
+    const today = this.getToday();
     const createdItems = [];
+
     for (const itemText of routine.items) {
       const item = await this.addItem(itemText);
-      await this.updateItem(item.id, { status: 'today' });
+      await this.updateItem(item.id, {
+        status: 'today',
+        scheduled_for_date: today
+      });
       createdItems.push(item);
     }
     return createdItems;
@@ -738,7 +901,7 @@ class BattlePlanDB {
     });
 
     return {
-      version: 3,
+      version: 4,
       exported: new Date().toISOString(),
       items,
       routines,
@@ -747,10 +910,16 @@ class BattlePlanDB {
     };
   }
 
-  async importData(data) {
+  async importData(data, skipConfirm = false) {
     await this.ready;
+
     if (!data || !data.version) {
       throw new Error('Invalid backup file format');
+    }
+
+    // Version check
+    if (data.version > 4) {
+      throw new Error(`Backup version ${data.version} is newer than supported. Please update the app.`);
     }
 
     const clearStore = (storeName) => {
@@ -775,6 +944,8 @@ class BattlePlanDB {
         estimate_bucket: null, confidence: null, actual_bucket: null,
         next_action: null,
         scheduled_for_date: null,
+        top3Date: null,
+        top3Locked: false,
         created_at: item.created || new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...item
@@ -819,11 +990,68 @@ class BattlePlanDB {
 
     return true;
   }
+
+  // ==================== DEV TEST HARNESS ====================
+
+  async runDiagnostics() {
+    const today = this.getToday();
+    const allItems = await this.getAllItems();
+    const todayItems = await this.getTodayItems();
+    const top3Items = await this.getTop3Items();
+    const usableCapacity = await this.getUsableCapacity();
+
+    // Count stats
+    const ratedItems = todayItems.filter(i => this.isRated(i));
+    const unratedItems = todayItems.filter(i => !this.isRated(i));
+    const overdueItems = allItems.filter(i => this.isOverdue(i));
+    const monsterItems = todayItems.filter(i => this.isMonster(i));
+
+    // Calculate buffered time for top 3
+    let top3BufferedTotal = 0;
+    for (const item of top3Items) {
+      const buffered = await this.getBufferedMinutes(item);
+      top3BufferedTotal += buffered || 0;
+    }
+
+    // Sample sort order (first 5)
+    const sorted = ratedItems
+      .map(item => ({
+        text: item.text.substring(0, 30),
+        score: this.calculateScores(item).priority_score,
+        isMonster: this.isMonster(item),
+        isUrgent: item.C === 5
+      }))
+      .sort((a, b) => {
+        if (a.isUrgent && !b.isUrgent) return -1;
+        if (!a.isUrgent && b.isUrgent) return 1;
+        return (b.score || 0) - (a.score || 0);
+      })
+      .slice(0, 5);
+
+    const diagnostics = {
+      date: today,
+      totalItems: allItems.length,
+      todayCount: todayItems.length,
+      ratedCount: ratedItems.length,
+      unratedCount: unratedItems.length,
+      overdueCount: overdueItems.length,
+      monsterCount: monsterItems.length,
+      top3Count: top3Items.length,
+      top3BufferedTotal,
+      usableCapacity,
+      capacityUsedPercent: Math.round((top3BufferedTotal / usableCapacity) * 100),
+      sampleSortOrder: sorted
+    };
+
+    console.log('=== Battle Plan Diagnostics ===');
+    console.log(JSON.stringify(diagnostics, null, 2));
+
+    return diagnostics;
+  }
 }
 
 // Constants export
 const BUCKETS = ESTIMATE_BUCKETS;
-const CONFIDENCE_LEVELS = ['high', 'medium', 'low'];
 
 // Global database instance
 const db = new BattlePlanDB();

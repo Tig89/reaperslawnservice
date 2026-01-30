@@ -28,6 +28,9 @@ class BattlePlanApp {
     // Pending completion for actual time tracking
     this.pendingCompletionId = null;
 
+    // Pending import data for confirmation
+    this.pendingImportData = null;
+
     this.init();
   }
 
@@ -103,6 +106,14 @@ class BattlePlanApp {
       this.updateHUD();
     });
 
+    // Behavior settings
+    document.getElementById('setting-auto-roll').addEventListener('change', (e) => {
+      db.setSetting('auto_roll_tomorrow_to_today', e.target.checked);
+    });
+    document.getElementById('setting-top3-clear').addEventListener('change', (e) => {
+      db.setSetting('top3_auto_clear_daily', e.target.checked);
+    });
+
     // Edit Modal
     document.getElementById('edit-save-btn').addEventListener('click', () => this.saveEditItem());
     document.getElementById('edit-delete-btn').addEventListener('click', () => this.deleteEditItem());
@@ -151,6 +162,10 @@ class BattlePlanApp {
     document.getElementById('routine-delete-btn').addEventListener('click', () => this.deleteRoutine());
     document.getElementById('routine-cancel-btn').addEventListener('click', () => this.closeRoutineModal());
 
+    // Import Confirmation Modal
+    document.getElementById('import-confirm-btn').addEventListener('click', () => this.confirmImport());
+    document.getElementById('import-cancel-btn').addEventListener('click', () => this.cancelImport());
+
     // Focus Mode
     document.getElementById('focus-pause-btn').addEventListener('click', () => this.toggleFocusPause());
     document.getElementById('focus-stop-btn').addEventListener('click', () => this.stopFocus());
@@ -172,6 +187,7 @@ class BattlePlanApp {
   }
 
   async loadCapacitySettings() {
+    // Capacity settings
     const weekday = await db.getSetting('weekday_capacity_minutes', 180);
     const weekend = await db.getSetting('weekend_capacity_minutes', 360);
     const slack = await db.getSetting('always_plan_slack_percent', 30);
@@ -179,6 +195,13 @@ class BattlePlanApp {
     document.getElementById('setting-weekday-capacity').value = weekday;
     document.getElementById('setting-weekend-capacity').value = weekend;
     document.getElementById('setting-slack').value = slack;
+
+    // Behavior settings
+    const autoRoll = await db.getSetting('auto_roll_tomorrow_to_today', true);
+    const top3Clear = await db.getSetting('top3_auto_clear_daily', true);
+
+    document.getElementById('setting-auto-roll').checked = autoRoll;
+    document.getElementById('setting-top3-clear').checked = top3Clear;
   }
 
   // ==================== NAVIGATION ====================
@@ -1214,36 +1237,127 @@ class BattlePlanApp {
     try {
       const text = await file.text();
       const data = JSON.parse(text);
-      await db.importData(data);
+
+      // Store pending data and show confirmation modal
+      this.pendingImportData = data;
+
+      // Show info about what will be imported
+      const itemCount = data.items ? data.items.length : 0;
+      const routineCount = data.routines ? data.routines.length : 0;
+      const version = data.version || 'unknown';
+
+      document.getElementById('import-file-info').textContent =
+        `File: ${file.name}\nVersion: ${version}\nItems: ${itemCount}, Routines: ${routineCount}`;
+      document.getElementById('import-confirm-modal').classList.remove('hidden');
+    } catch (err) {
+      alert('Error reading file: ' + err.message);
+    }
+
+    e.target.value = '';
+  }
+
+  async confirmImport() {
+    if (!this.pendingImportData) return;
+
+    try {
+      await db.importData(this.pendingImportData);
+      this.pendingImportData = null;
+      document.getElementById('import-confirm-modal').classList.add('hidden');
       alert('Data imported successfully!');
       await this.render();
       await this.updateHUD();
     } catch (err) {
       alert('Error importing data: ' + err.message);
     }
+  }
 
-    e.target.value = '';
+  cancelImport() {
+    this.pendingImportData = null;
+    document.getElementById('import-confirm-modal').classList.add('hidden');
   }
 
   // ==================== SORTING ====================
 
+  /**
+   * Tiered sorting: groups by urgency tier, then sorts by priority_score within each tier.
+   * Tiers (in order):
+   *   0: Overdue scheduled tasks (scheduled_for_date < today)
+   *   1: Due today or past due (dueDate <= today)
+   *   2: Due tomorrow
+   *   3: Due within 3 days
+   *   4: Everything else
+   * Within each tier: sort by priority_score descending, then by newest first.
+   */
   sortByPriority(items) {
     const today = new Date().toISOString().split('T')[0];
+    const todayDate = new Date(today);
+
+    // Get tomorrow's date string
+    const tomorrowDate = new Date(todayDate);
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrow = tomorrowDate.toISOString().split('T')[0];
+
+    // Get 3 days from now
+    const threeDaysDate = new Date(todayDate);
+    threeDaysDate.setDate(threeDaysDate.getDate() + 3);
+    const threeDays = threeDaysDate.toISOString().split('T')[0];
 
     return items.sort((a, b) => {
-      // Calculate effective priority for each item
-      const scoreA = this.calculateEffectivePriority(a, today);
-      const scoreB = this.calculateEffectivePriority(b, today);
+      // Determine tier for each item
+      const tierA = this.getUrgencyTier(a, today, tomorrow, threeDays);
+      const tierB = this.getUrgencyTier(b, today, tomorrow, threeDays);
 
-      // Higher score = higher priority (sort descending)
+      // Lower tier number = higher priority (sort ascending by tier)
+      if (tierA !== tierB) return tierA - tierB;
+
+      // Within same tier: sort by priority_score descending
+      const scoreA = this.getPriorityScore(a);
+      const scoreB = this.getPriorityScore(b);
       if (scoreB !== scoreA) return scoreB - scoreA;
 
       // Tie-breaker: newer items first
-      return new Date(b.created_at) - new Date(a.created_at);
+      const createdA = new Date(a.created_at || a.created || 0);
+      const createdB = new Date(b.created_at || b.created || 0);
+      return createdB - createdA;
     });
   }
 
-  calculateEffectivePriority(item, today) {
+  /**
+   * Returns urgency tier for an item:
+   *   0: Overdue scheduled tasks
+   *   1: Due today or past due
+   *   2: Due tomorrow
+   *   3: Due within 3 days
+   *   4: Everything else
+   */
+  getUrgencyTier(item, today, tomorrow, threeDays) {
+    // Tier 0: Overdue scheduled tasks (scheduled but past)
+    if (item.scheduled_for_date && item.scheduled_for_date < today && item.status !== 'done') {
+      return 0;
+    }
+
+    // Check due date for tiers 1-3
+    if (item.dueDate) {
+      if (item.dueDate <= today) {
+        return 1; // Tier 1: Due today or past due
+      }
+      if (item.dueDate <= tomorrow) {
+        return 2; // Tier 2: Due tomorrow
+      }
+      if (item.dueDate <= threeDays) {
+        return 3; // Tier 3: Due within 3 days
+      }
+    }
+
+    // Tier 4: Everything else
+    return 4;
+  }
+
+  /**
+   * Get priority score for an item.
+   * Adds bonuses for URGENT (C=5) and rated items.
+   */
+  getPriorityScore(item) {
     let score = 0;
 
     // Base ACE+LMT score (0-27 range)
@@ -1252,36 +1366,12 @@ class BattlePlanApp {
       score = scores.priority_score;
     }
 
-    // Time sensitivity bonuses
-    const isOverdue = item.scheduled_for_date && item.scheduled_for_date < today && item.status !== 'done';
-    const hasDueDate = item.dueDate;
-
-    // Overdue items get big boost (+20)
-    if (isOverdue) {
-      score += 20;
-    }
-
-    // Due date approaching (within 3 days) gets boost
-    if (hasDueDate) {
-      const dueDate = new Date(item.dueDate);
-      const todayDate = new Date(today);
-      const daysUntilDue = Math.ceil((dueDate - todayDate) / (1000 * 60 * 60 * 24));
-
-      if (daysUntilDue <= 0) {
-        score += 15; // Due today or past due
-      } else if (daysUntilDue <= 1) {
-        score += 10; // Due tomorrow
-      } else if (daysUntilDue <= 3) {
-        score += 5; // Due within 3 days
-      }
-    }
-
     // URGENT (C=5) gets extra visibility even without full rating
     if (item.C === 5) {
       score += 10;
     }
 
-    // Rated items get slight preference over unrated
+    // Rated items get slight preference over unrated within same tier
     if (db.isRated(item)) {
       score += 1;
     }

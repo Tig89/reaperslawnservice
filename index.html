@@ -147,6 +147,20 @@
         </div>
 
         <div class="settings-section">
+          <h3>Behavior</h3>
+          <div class="setting-row">
+            <label>Auto-roll tomorrow items to today</label>
+            <input type="checkbox" id="setting-auto-roll" checked>
+          </div>
+          <p class="setting-hint">When enabled, items scheduled for tomorrow automatically become today items at midnight.</p>
+          <div class="setting-row">
+            <label>Auto-clear Top 3 daily</label>
+            <input type="checkbox" id="setting-top3-clear" checked>
+          </div>
+          <p class="setting-hint">When enabled, Top 3 selections reset each day. Disable to keep them sticky.</p>
+        </div>
+
+        <div class="settings-section">
           <h3>Focus Timer</h3>
           <div class="timer-options">
             <button class="timer-preset" data-minutes="25">25 min</button>
@@ -379,6 +393,19 @@
           <button id="routine-save-btn" class="btn-primary">Save</button>
           <button id="routine-delete-btn" class="btn-danger">Delete</button>
           <button id="routine-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Confirmation Modal -->
+    <div id="import-confirm-modal" class="overlay hidden">
+      <div class="modal-content">
+        <h3>⚠️ Import Data</h3>
+        <p class="import-warning">This will replace ALL your current data with the imported file.</p>
+        <p id="import-file-info"></p>
+        <div class="modal-actions">
+          <button id="import-confirm-btn" class="btn-danger">Import & Replace</button>
+          <button id="import-cancel-btn" class="btn-secondary">Cancel</button>
         </div>
       </div>
     </div>

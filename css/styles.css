@@ -928,6 +928,26 @@ body {
   min-width: 100px;
 }
 
+/* Import confirmation modal */
+.import-warning {
+  background: rgba(231, 76, 60, 0.2);
+  color: var(--danger);
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius);
+  font-weight: 500;
+  margin-bottom: var(--spacing-md);
+}
+
+#import-file-info {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: pre-line;
+  background: var(--bg-secondary);
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius);
+  margin-bottom: var(--spacing-md);
+}
+
 /* ==================== FOCUS MODE ==================== */
 .focus-content {
   text-align: center;
@@ -1012,6 +1032,21 @@ body {
 .setting-row input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.setting-row input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.setting-hint {
+  margin-top: calc(-1 * var(--spacing-sm));
+  margin-bottom: var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .timer-options {
