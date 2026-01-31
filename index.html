@@ -69,6 +69,7 @@
       <section id="page-inbox" class="page active">
         <div class="input-area">
           <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off">
+          <button class="voice-btn" data-target="inbox-input" title="Voice input">🎤</button>
           <button id="inbox-add-btn">+</button>
         </div>
         <ul id="inbox-list" class="item-list"></ul>
@@ -158,6 +159,11 @@
             <input type="checkbox" id="setting-top3-clear" checked>
           </div>
           <p class="setting-hint">When enabled, Top 3 selections reset each day. Disable to keep them sticky.</p>
+          <div class="setting-row">
+            <label>Enable swipe gestures</label>
+            <input type="checkbox" id="setting-swipe-gestures" checked>
+          </div>
+          <p class="setting-hint">Swipe tasks left/right for quick actions. Right = Done, Left = Tomorrow. Works best on touch screens.</p>
         </div>
 
         <div class="settings-section">

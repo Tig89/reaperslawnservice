@@ -31,6 +31,15 @@ class BattlePlanApp {
     // Pending import data for confirmation
     this.pendingImportData = null;
 
+    // Swipe gesture state
+    this.swipeState = null;
+    this.swipeEnabled = true;
+
+    // Voice input state
+    this.speechRecognition = null;
+    this.isListening = false;
+    this.voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
     this.init();
   }
 
@@ -42,6 +51,10 @@ class BattlePlanApp {
 
     // Load settings
     this.timerDefault = await db.getSetting('timerDefault', 25);
+    this.swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
+
+    // Initialize voice input if supported
+    this.initVoiceInput();
 
     this.bindEvents();
     this.render();
@@ -112,6 +125,19 @@ class BattlePlanApp {
     });
     document.getElementById('setting-top3-clear').addEventListener('change', (e) => {
       db.setSetting('top3_auto_clear_daily', e.target.checked);
+    });
+    document.getElementById('setting-swipe-gestures').addEventListener('change', (e) => {
+      this.swipeEnabled = e.target.checked;
+      db.setSetting('enable_swipe_gestures', e.target.checked);
+    });
+
+    // Voice input buttons
+    document.querySelectorAll('.voice-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetInput = btn.dataset.target;
+        this.startVoiceInput(targetInput);
+      });
     });
 
     // Edit Modal
@@ -199,9 +225,11 @@ class BattlePlanApp {
     // Behavior settings
     const autoRoll = await db.getSetting('auto_roll_tomorrow_to_today', true);
     const top3Clear = await db.getSetting('top3_auto_clear_daily', true);
+    const swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
 
     document.getElementById('setting-auto-roll').checked = autoRoll;
     document.getElementById('setting-top3-clear').checked = top3Clear;
+    document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
   }
 
   // ==================== NAVIGATION ====================
@@ -522,20 +550,39 @@ class BattlePlanApp {
       `;
     }
 
+    // Swipe action trays (hidden by default, revealed on swipe)
+    const swipeRightTray = `
+      <div class="swipe-tray swipe-tray-right">
+        <button class="swipe-action swipe-done" data-action="done">Done</button>
+        <button class="swipe-action swipe-tomorrow" data-action="tomorrow">Tomorrow</button>
+        <button class="swipe-action swipe-edit" data-action="edit">Edit</button>
+      </div>
+    `;
+    const swipeLeftTray = `
+      <div class="swipe-tray swipe-tray-left">
+        <button class="swipe-action swipe-edit" data-action="edit">Edit</button>
+        <button class="swipe-action swipe-tomorrow" data-action="tomorrow">Tomorrow</button>
+      </div>
+    `;
+
     return `
-      <li class="item ${statusClass} ${selectedClass} ${overdueClass}" data-id="${item.id}">
-        ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
-        <div class="item-header">
-          <div class="item-text">${this.escapeHtml(item.text)}</div>
-          ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
+      <li class="item-wrapper" data-id="${item.id}">
+        ${swipeLeftTray}
+        <div class="item ${statusClass} ${selectedClass} ${overdueClass}" data-id="${item.id}">
+          ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
+          <div class="item-header">
+            <div class="item-text">${this.escapeHtml(item.text)}</div>
+            ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
+          </div>
+          ${nextActionHtml}
+          ${badgesHtml}
+          <div class="item-meta">
+            ${metaHtml}
+          </div>
+          ${pillsHtml}
+          ${actionsHtml}
         </div>
-        ${nextActionHtml}
-        ${badgesHtml}
-        <div class="item-meta">
-          ${metaHtml}
-        </div>
-        ${pillsHtml}
-        ${actionsHtml}
+        ${swipeRightTray}
       </li>
     `;
   }
@@ -549,7 +596,9 @@ class BattlePlanApp {
     // Click to select
     document.querySelectorAll('.item').forEach(item => {
       item.addEventListener('click', (e) => {
-        if (e.target.classList.contains('pill') || e.target.classList.contains('top3-toggle')) return;
+        if (e.target.classList.contains('pill') ||
+            e.target.classList.contains('top3-toggle') ||
+            e.target.classList.contains('swipe-action')) return;
         this.selectItem(item.dataset.id);
       });
 
@@ -604,6 +653,482 @@ class BattlePlanApp {
         await this.updateHUD();
       });
     });
+
+    // Swipe action tray buttons
+    document.querySelectorAll('.swipe-action').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const wrapper = btn.closest('.item-wrapper');
+        const itemId = wrapper.dataset.id;
+        const action = btn.dataset.action;
+        await this.handleSwipeAction(itemId, action, wrapper);
+      });
+    });
+
+    // Bind swipe gestures if enabled
+    if (this.swipeEnabled) {
+      this.bindSwipeGestures();
+    }
+  }
+
+  // ==================== SWIPE GESTURES ====================
+
+  bindSwipeGestures() {
+    document.querySelectorAll('.item-wrapper').forEach(wrapper => {
+      const item = wrapper.querySelector('.item');
+      if (!item) return;
+
+      // Use pointer events for unified touch/mouse handling
+      item.addEventListener('touchstart', (e) => this.handleSwipeStart(e, wrapper), { passive: true });
+      item.addEventListener('touchmove', (e) => this.handleSwipeMove(e, wrapper), { passive: false });
+      item.addEventListener('touchend', (e) => this.handleSwipeEnd(e, wrapper));
+      item.addEventListener('touchcancel', (e) => this.handleSwipeCancel(wrapper));
+    });
+  }
+
+  handleSwipeStart(e, wrapper) {
+    if (!this.swipeEnabled) return;
+
+    const touch = e.touches[0];
+    const item = wrapper.querySelector('.item');
+    const rect = item.getBoundingClientRect();
+
+    this.swipeState = {
+      wrapper,
+      item,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      currentX: 0,
+      cardWidth: rect.width,
+      isScrolling: null, // null = undecided, true = vertical scroll, false = horizontal swipe
+      trayRevealed: false
+    };
+
+    item.style.transition = 'none';
+  }
+
+  handleSwipeMove(e, wrapper) {
+    if (!this.swipeState || this.swipeState.wrapper !== wrapper) return;
+
+    const touch = e.touches[0];
+    const dx = touch.clientX - this.swipeState.startX;
+    const dy = touch.clientY - this.swipeState.startY;
+
+    // Determine scroll direction on first significant move
+    if (this.swipeState.isScrolling === null) {
+      // Use 10px threshold to decide
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+        // Vertical scroll - cancel swipe and allow scroll
+        this.swipeState.isScrolling = true;
+        return;
+      } else if (Math.abs(dx) > 10) {
+        // Horizontal swipe - prevent scroll
+        this.swipeState.isScrolling = false;
+      }
+    }
+
+    // If scrolling vertically, don't interfere
+    if (this.swipeState.isScrolling === true) {
+      return;
+    }
+
+    // Prevent vertical scroll when swiping horizontally
+    if (this.swipeState.isScrolling === false) {
+      e.preventDefault();
+    }
+
+    // Calculate swipe percentage
+    const swipePercent = Math.abs(dx) / this.swipeState.cardWidth;
+    this.swipeState.currentX = dx;
+
+    // Apply transform to the item
+    const item = this.swipeState.item;
+    item.style.transform = `translateX(${dx}px)`;
+
+    // Show/hide action trays based on direction
+    const rightTray = wrapper.querySelector('.swipe-tray-right');
+    const leftTray = wrapper.querySelector('.swipe-tray-left');
+
+    if (dx > 0) {
+      // Swiping right
+      rightTray.classList.add('visible');
+      leftTray.classList.remove('visible');
+
+      // Visual feedback for full swipe threshold
+      if (swipePercent >= 0.6) {
+        item.classList.add('swipe-threshold');
+      } else {
+        item.classList.remove('swipe-threshold');
+      }
+    } else if (dx < 0) {
+      // Swiping left
+      leftTray.classList.add('visible');
+      rightTray.classList.remove('visible');
+
+      if (swipePercent >= 0.6) {
+        item.classList.add('swipe-threshold');
+      } else {
+        item.classList.remove('swipe-threshold');
+      }
+    }
+
+    // Mark tray as revealed if past 20%
+    if (swipePercent >= 0.2) {
+      this.swipeState.trayRevealed = true;
+    }
+  }
+
+  handleSwipeEnd(e, wrapper) {
+    if (!this.swipeState || this.swipeState.wrapper !== wrapper) return;
+
+    const { item, currentX, cardWidth } = this.swipeState;
+    const swipePercent = Math.abs(currentX) / cardWidth;
+    const swipeRight = currentX > 0;
+
+    item.style.transition = 'transform 0.2s ease-out';
+    item.classList.remove('swipe-threshold');
+
+    // Full swipe (>= 60%) - execute action immediately
+    if (swipePercent >= 0.6) {
+      const itemId = wrapper.dataset.id;
+
+      // Haptic feedback if available
+      if (navigator.vibrate) {
+        navigator.vibrate(10);
+      }
+
+      if (swipeRight) {
+        // Full swipe right = Done
+        this.animateSwipeOut(wrapper, 'right').then(() => {
+          this.setItemStatus(itemId, 'done');
+        });
+      } else {
+        // Full swipe left = Tomorrow
+        this.animateSwipeOut(wrapper, 'left').then(async () => {
+          await db.setTomorrow(itemId);
+          await this.render();
+          await this.updateHUD();
+        });
+      }
+    }
+    // Partial swipe (20-60%) - leave tray visible
+    else if (swipePercent >= 0.2) {
+      // Snap to reveal tray position
+      const revealDistance = swipeRight ? 120 : -120;
+      item.style.transform = `translateX(${revealDistance}px)`;
+      wrapper.classList.add('tray-open');
+
+      // Add click-outside listener to close
+      this.addTrayCloseListener(wrapper);
+    }
+    // Small swipe (< 20%) - snap back
+    else {
+      this.resetSwipe(wrapper);
+    }
+
+    this.swipeState = null;
+  }
+
+  handleSwipeCancel(wrapper) {
+    if (this.swipeState && this.swipeState.wrapper === wrapper) {
+      this.resetSwipe(wrapper);
+      this.swipeState = null;
+    }
+  }
+
+  resetSwipe(wrapper) {
+    const item = wrapper.querySelector('.item');
+    const rightTray = wrapper.querySelector('.swipe-tray-right');
+    const leftTray = wrapper.querySelector('.swipe-tray-left');
+
+    item.style.transition = 'transform 0.2s ease-out';
+    item.style.transform = 'translateX(0)';
+    item.classList.remove('swipe-threshold');
+    rightTray.classList.remove('visible');
+    leftTray.classList.remove('visible');
+    wrapper.classList.remove('tray-open');
+  }
+
+  animateSwipeOut(wrapper, direction) {
+    return new Promise(resolve => {
+      const item = wrapper.querySelector('.item');
+      const distance = direction === 'right' ? window.innerWidth : -window.innerWidth;
+
+      item.style.transition = 'transform 0.3s ease-out, opacity 0.3s ease-out';
+      item.style.transform = `translateX(${distance}px)`;
+      item.style.opacity = '0';
+
+      setTimeout(() => {
+        wrapper.style.height = wrapper.offsetHeight + 'px';
+        wrapper.style.transition = 'height 0.2s ease-out, opacity 0.2s ease-out';
+        wrapper.style.height = '0';
+        wrapper.style.overflow = 'hidden';
+        wrapper.style.opacity = '0';
+
+        setTimeout(resolve, 200);
+      }, 300);
+    });
+  }
+
+  addTrayCloseListener(wrapper) {
+    const closeHandler = (e) => {
+      // Check if click is outside the wrapper
+      if (!wrapper.contains(e.target)) {
+        this.resetSwipe(wrapper);
+        document.removeEventListener('click', closeHandler);
+        document.removeEventListener('touchstart', closeHandler);
+      }
+    };
+
+    // Delay adding listener to avoid immediate trigger
+    setTimeout(() => {
+      document.addEventListener('click', closeHandler);
+      document.addEventListener('touchstart', closeHandler, { passive: true });
+    }, 100);
+  }
+
+  async handleSwipeAction(itemId, action, wrapper) {
+    // Close the tray first
+    this.resetSwipe(wrapper);
+
+    switch (action) {
+      case 'done':
+        await this.setItemStatus(itemId, 'done');
+        break;
+      case 'tomorrow':
+        await db.setTomorrow(itemId);
+        await this.render();
+        await this.updateHUD();
+        break;
+      case 'edit':
+        this.openEditModal(itemId);
+        break;
+    }
+  }
+
+  // ==================== VOICE INPUT ====================
+
+  initVoiceInput() {
+    if (!this.voiceSupported) {
+      // Hide mic buttons if not supported
+      document.querySelectorAll('.voice-btn').forEach(btn => {
+        btn.style.display = 'none';
+      });
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    this.speechRecognition = new SpeechRecognition();
+    this.speechRecognition.continuous = false;
+    this.speechRecognition.interimResults = false;
+    this.speechRecognition.lang = 'en-US';
+
+    this.speechRecognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      this.handleVoiceResult(transcript);
+    };
+
+    this.speechRecognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      this.stopVoiceInput();
+
+      let message = 'Voice input error';
+      if (event.error === 'not-allowed') {
+        message = 'Microphone access denied';
+      } else if (event.error === 'no-speech') {
+        message = 'No speech detected';
+      } else if (event.error === 'network') {
+        message = 'Voice requires internet connection';
+      }
+      this.showToast(message);
+    };
+
+    this.speechRecognition.onend = () => {
+      this.stopVoiceInput();
+    };
+  }
+
+  startVoiceInput(targetInputId) {
+    if (!this.voiceSupported || !this.speechRecognition) {
+      this.showToast('Voice input not supported in this browser');
+      return;
+    }
+
+    if (this.isListening) {
+      this.stopVoiceInput();
+      return;
+    }
+
+    this.isListening = true;
+    this.currentVoiceTarget = targetInputId;
+
+    // Update button state
+    const btn = document.querySelector(`.voice-btn[data-target="${targetInputId}"]`);
+    if (btn) {
+      btn.classList.add('listening');
+    }
+
+    // Show listening indicator
+    this.showToast('Listening...', 'listening');
+
+    try {
+      this.speechRecognition.start();
+    } catch (err) {
+      console.error('Failed to start speech recognition:', err);
+      this.stopVoiceInput();
+      this.showToast('Failed to start voice input');
+    }
+  }
+
+  stopVoiceInput() {
+    this.isListening = false;
+
+    // Update all voice buttons
+    document.querySelectorAll('.voice-btn').forEach(btn => {
+      btn.classList.remove('listening');
+    });
+
+    // Hide listening toast
+    this.hideToast();
+
+    try {
+      this.speechRecognition?.stop();
+    } catch (err) {
+      // Ignore errors when stopping
+    }
+  }
+
+  handleVoiceResult(transcript) {
+    const trimmed = transcript.trim();
+
+    // Try to parse as command first
+    const command = this.parseVoiceCommand(trimmed);
+
+    if (command) {
+      this.executeVoiceCommand(command);
+    } else {
+      // Insert as text into target input
+      const input = document.getElementById(this.currentVoiceTarget);
+      if (input) {
+        // Append to existing text or replace
+        if (input.value.trim()) {
+          input.value = input.value.trim() + ' ' + trimmed;
+        } else {
+          input.value = trimmed;
+        }
+        input.focus();
+        this.showToast('Added: ' + trimmed.substring(0, 30) + (trimmed.length > 30 ? '...' : ''));
+      }
+    }
+
+    this.stopVoiceInput();
+  }
+
+  parseVoiceCommand(text) {
+    const lower = text.toLowerCase();
+
+    // "add task <text>"
+    if (lower.startsWith('add task ')) {
+      return { action: 'add', text: text.substring(9).trim() };
+    }
+
+    // "mark done <keyword>" or "complete <keyword>"
+    const doneMatch = lower.match(/^(mark done|complete|finish)\s+(.+)$/);
+    if (doneMatch) {
+      return { action: 'done', keyword: doneMatch[2].trim() };
+    }
+
+    // "move <keyword> to tomorrow"
+    const tomorrowMatch = lower.match(/^move\s+(.+)\s+to tomorrow$/);
+    if (tomorrowMatch) {
+      return { action: 'tomorrow', keyword: tomorrowMatch[1].trim() };
+    }
+
+    // "start focus"
+    if (lower === 'start focus' || lower === 'focus mode') {
+      return { action: 'focus' };
+    }
+
+    // No command matched - treat as text
+    return null;
+  }
+
+  async executeVoiceCommand(command) {
+    switch (command.action) {
+      case 'add':
+        await db.addItem(command.text);
+        await this.render();
+        this.showToast('Added: ' + command.text.substring(0, 20) + '...');
+        break;
+
+      case 'done':
+        const doneItem = await this.findItemByKeyword(command.keyword);
+        if (doneItem) {
+          await this.setItemStatus(doneItem.id, 'done');
+          this.showToast('Marked done: ' + doneItem.text.substring(0, 20) + '...');
+        } else {
+          this.showToast('No matching task found');
+        }
+        break;
+
+      case 'tomorrow':
+        const tmrwItem = await this.findItemByKeyword(command.keyword);
+        if (tmrwItem) {
+          await db.setTomorrow(tmrwItem.id);
+          await this.render();
+          await this.updateHUD();
+          this.showToast('Moved to tomorrow: ' + tmrwItem.text.substring(0, 20) + '...');
+        } else {
+          this.showToast('No matching task found');
+        }
+        break;
+
+      case 'focus':
+        this.startFocus();
+        break;
+    }
+  }
+
+  async findItemByKeyword(keyword) {
+    // Search in current view first
+    let items;
+    if (this.currentPage === 'today') {
+      items = await db.getTodayItems();
+    } else if (this.currentPage === 'inbox') {
+      items = await db.getInboxItems();
+    } else {
+      items = await db.getAllItems();
+    }
+
+    const lower = keyword.toLowerCase();
+    return items.find(item =>
+      item.text.toLowerCase().includes(lower) ||
+      (item.next_action && item.next_action.toLowerCase().includes(lower))
+    );
+  }
+
+  showToast(message, type = 'info') {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.className = `toast toast-${type} visible`;
+
+    // Auto-hide after 3 seconds (unless it's listening)
+    if (type !== 'listening') {
+      setTimeout(() => this.hideToast(), 3000);
+    }
+  }
+
+  hideToast() {
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.classList.remove('visible');
+    }
   }
 
   selectItem(id) {
