@@ -314,6 +314,37 @@ class BattlePlanApp {
     } else {
       warningEl.classList.add('hidden');
     }
+
+    // Urgency stats (across ALL non-done items)
+    const allItems = await db.getAllItems();
+    let dueOverdue = 0, dueCritical = 0, dueUrgent = 0, dueWarning = 0;
+
+    for (const item of allItems) {
+      const urgency = this.getDueUrgency(item);
+      if (urgency.tier === 'urgency-overdue') dueOverdue++;
+      else if (urgency.tier === 'urgency-critical') dueCritical++;
+      else if (urgency.tier === 'urgency-urgent') dueUrgent++;
+      else if (urgency.tier === 'urgency-warning') dueWarning++;
+    }
+
+    const totalDueItems = dueOverdue + dueCritical + dueUrgent + dueWarning;
+    const urgencyRow = document.getElementById('hud-urgency-row');
+
+    if (totalDueItems > 0) {
+      urgencyRow.style.display = '';
+      document.getElementById('hud-due-overdue-count').textContent = dueOverdue;
+      document.getElementById('hud-due-critical-count').textContent = dueCritical;
+      document.getElementById('hud-due-urgent-count').textContent = dueUrgent;
+      document.getElementById('hud-due-warning-count').textContent = dueWarning;
+
+      // Only show non-zero categories
+      document.getElementById('hud-due-overdue').style.display = dueOverdue ? '' : 'none';
+      document.getElementById('hud-due-critical').style.display = dueCritical ? '' : 'none';
+      document.getElementById('hud-due-urgent').style.display = dueUrgent ? '' : 'none';
+      document.getElementById('hud-due-warning').style.display = dueWarning ? '' : 'none';
+    } else {
+      urgencyRow.style.display = 'none';
+    }
   }
 
   // ==================== RENDERING ====================

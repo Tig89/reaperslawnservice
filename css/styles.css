@@ -132,6 +132,16 @@ body {
   display: none;
 }
 
+/* HUD urgency colors */
+.hud-urgency-warning { color: var(--warning); }
+.hud-urgency-warning strong { color: var(--warning); }
+.hud-urgency-urgent { color: #ff8c00; }
+.hud-urgency-urgent strong { color: #ff8c00; }
+.hud-urgency-critical { color: var(--danger); }
+.hud-urgency-critical strong { color: var(--danger); }
+.hud-urgency-overdue { color: var(--overdue); }
+.hud-urgency-overdue strong { color: var(--overdue); }
+
 .capacity-warning {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
