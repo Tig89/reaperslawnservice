@@ -926,6 +926,9 @@ body {
 .modal-actions button {
   flex: 1;
   min-width: 100px;
+  padding: var(--spacing-md) var(--spacing-lg);
+  font-size: var(--font-size-md);
+  min-height: 52px;
 }
 
 /* Import confirmation modal */

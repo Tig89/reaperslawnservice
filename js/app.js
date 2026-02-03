@@ -57,6 +57,16 @@ class BattlePlanApp {
     this.initVoiceInput();
 
     this.bindEvents();
+
+    // Handle initial page from URL hash (for back button support)
+    const hash = window.location.hash.slice(1);
+    const validPages = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'settings'];
+    if (hash && validPages.includes(hash)) {
+      this.navigateTo(hash, false);
+    }
+    // Set initial history state
+    history.replaceState({ page: this.currentPage }, '', `#${this.currentPage}`);
+
     this.render();
     this.updateHUD();
   }
@@ -68,6 +78,9 @@ class BattlePlanApp {
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', () => this.navigateTo(btn.dataset.page));
     });
+
+    // Handle browser back/forward buttons (Android back button support)
+    window.addEventListener('popstate', (e) => this.handlePopState(e));
 
     // Search
     document.getElementById('search-input').addEventListener('input', (e) => {
@@ -234,7 +247,7 @@ class BattlePlanApp {
 
   // ==================== NAVIGATION ====================
 
-  navigateTo(page) {
+  navigateTo(page, pushHistory = true) {
     this.currentPage = page;
     this.selectedItemId = null;
 
@@ -254,7 +267,22 @@ class BattlePlanApp {
       hud.classList.add('hidden');
     }
 
+    // Update browser history for Android back button support
+    if (pushHistory) {
+      history.pushState({ page }, '', `#${page}`);
+    }
+
     this.render();
+  }
+
+  // Handle browser back/forward buttons
+  handlePopState(event) {
+    if (event.state && event.state.page) {
+      this.navigateTo(event.state.page, false);
+    } else {
+      // Default to inbox if no state
+      this.navigateTo('inbox', false);
+    }
   }
 
   // ==================== HUD ====================
