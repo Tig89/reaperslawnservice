@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#16213e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Battle Plan - Army-style task prioritization">
+  <title>Battle Plan</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header with HUD -->
+    <header id="header">
+      <div class="header-top">
+        <h1>Battle Plan</h1>
+      </div>
+      <!-- HUD - Today Stats -->
+      <div id="hud" class="hud hidden">
+        <div class="hud-row">
+          <span class="hud-item"><strong id="hud-buffered">0</strong>/<span id="hud-capacity">126</span> min</span>
+          <span class="hud-item"><strong id="hud-top3-count">0</strong>/3 locked</span>
+          <span class="hud-item" id="hud-monster"><strong id="hud-monster-count">0</strong> monster</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-item"><strong id="hud-rated">0</strong> rated</span>
+          <span class="hud-item"><strong id="hud-unrated">0</strong> unrated</span>
+          <span class="hud-item hud-overdue hidden" id="hud-overdue"><strong id="hud-overdue-count">0</strong> overdue</span>
+        </div>
+        <div id="capacity-warning" class="capacity-warning hidden">
+          Over capacity! Tap "Auto-balance" or remove tasks.
+          <button id="auto-balance-btn" class="btn-sm">Auto-balance</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Search Bar -->
+    <div id="search-bar" class="search-bar">
+      <input type="text" id="search-input" placeholder="Search tasks...">
+      <label class="search-all-toggle">
+        <input type="checkbox" id="search-all-checkbox">
+        <span>All</span>
+      </label>
+    </div>
+
+    <!-- Navigation (scrollable) -->
+    <nav id="nav">
+      <div class="nav-scroll">
+        <button class="nav-btn active" data-page="inbox">Inbox</button>
+        <button class="nav-btn" data-page="today">Today</button>
+        <button class="nav-btn" data-page="tomorrow">Tomorrow</button>
+        <button class="nav-btn" data-page="next">Next</button>
+        <button class="nav-btn" data-page="waiting">Waiting</button>
+        <button class="nav-btn" data-page="someday">Someday</button>
+        <button class="nav-btn" data-page="done">Done</button>
+        <button class="nav-btn" data-page="routines">Routines</button>
+        <button class="nav-btn" data-page="settings">&#9881;</button>
+      </div>
+    </nav>
+
+    <!-- Pages Container -->
+    <main id="main">
+      <!-- Inbox Page -->
+      <section id="page-inbox" class="page active">
+        <div class="input-area">
+          <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off">
+          <button class="voice-btn" data-target="inbox-input" title="Voice input">🎤</button>
+          <button id="inbox-add-btn">+</button>
+        </div>
+        <ul id="inbox-list" class="item-list"></ul>
+      </section>
+
+      <!-- Today Page -->
+      <section id="page-today" class="page">
+        <div class="today-actions">
+          <button id="suggest-top3-btn" class="btn-secondary btn-sm">Suggest Top 3</button>
+          <button id="rebuild-top3-btn" class="btn-secondary btn-sm">Rebuild Top 3</button>
+          <button id="start-focus-btn" class="btn-primary btn-sm">Start Focus</button>
+        </div>
+        <div id="suggestion-message" class="suggestion-message hidden"></div>
+        <div id="top3-section">
+          <h3>Top 3 Priorities <span id="top3-count">(0/3)</span></h3>
+          <ul id="top3-list" class="item-list top3"></ul>
+        </div>
+        <div id="today-section">
+          <h3>Other Today Items</h3>
+          <ul id="today-list" class="item-list"></ul>
+        </div>
+      </section>
+
+      <!-- Tomorrow Page -->
+      <section id="page-tomorrow" class="page">
+        <ul id="tomorrow-list" class="item-list"></ul>
+      </section>
+
+      <!-- Next Page -->
+      <section id="page-next" class="page">
+        <ul id="next-list" class="item-list"></ul>
+      </section>
+
+      <!-- Waiting Page -->
+      <section id="page-waiting" class="page">
+        <ul id="waiting-list" class="item-list"></ul>
+      </section>
+
+      <!-- Someday Page -->
+      <section id="page-someday" class="page">
+        <ul id="someday-list" class="item-list"></ul>
+      </section>
+
+      <!-- Done Page -->
+      <section id="page-done" class="page">
+        <ul id="done-list" class="item-list"></ul>
+      </section>
+
+      <!-- Routines Page -->
+      <section id="page-routines" class="page">
+        <div class="input-area">
+          <input type="text" id="routine-name-input" placeholder="New routine name...">
+          <button id="add-routine-btn">+</button>
+        </div>
+        <ul id="routines-list" class="routines-list"></ul>
+      </section>
+
+      <!-- Settings Page -->
+      <section id="page-settings" class="page">
+        <h2>Settings</h2>
+
+        <div class="settings-section">
+          <h3>Capacity Planning</h3>
+          <div class="setting-row">
+            <label>Weekday capacity (min)</label>
+            <input type="number" id="setting-weekday-capacity" min="60" max="480" value="180">
+          </div>
+          <div class="setting-row">
+            <label>Weekend capacity (min)</label>
+            <input type="number" id="setting-weekend-capacity" min="60" max="720" value="360">
+          </div>
+          <div class="setting-row">
+            <label>Slack buffer (%)</label>
+            <input type="number" id="setting-slack" min="0" max="50" value="30">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Behavior</h3>
+          <div class="setting-row">
+            <label>Auto-roll tomorrow items to today</label>
+            <input type="checkbox" id="setting-auto-roll" checked>
+          </div>
+          <p class="setting-hint">When enabled, items scheduled for tomorrow automatically become today items at midnight.</p>
+          <div class="setting-row">
+            <label>Auto-clear Top 3 daily</label>
+            <input type="checkbox" id="setting-top3-clear" checked>
+          </div>
+          <p class="setting-hint">When enabled, Top 3 selections reset each day. Disable to keep them sticky.</p>
+          <div class="setting-row">
+            <label>Enable swipe gestures</label>
+            <input type="checkbox" id="setting-swipe-gestures" checked>
+          </div>
+          <p class="setting-hint">Swipe tasks left/right for quick actions. Right = Done, Left = Tomorrow. Works best on touch screens.</p>
+        </div>
+
+        <div class="settings-section">
+          <h3>Focus Timer</h3>
+          <div class="timer-options">
+            <button class="timer-preset" data-minutes="25">25 min</button>
+            <button class="timer-preset" data-minutes="50">50 min</button>
+            <button class="timer-preset" data-minutes="0">Custom</button>
+          </div>
+          <input type="number" id="custom-timer" placeholder="Minutes" min="1" max="180" hidden>
+        </div>
+
+        <div class="settings-section">
+          <h3>Data Backup</h3>
+          <button id="export-btn" class="btn-secondary">Export JSON</button>
+          <button id="import-btn" class="btn-secondary">Import JSON</button>
+          <input type="file" id="import-file" accept=".json" hidden>
+        </div>
+
+        <div class="settings-section">
+          <h3>About</h3>
+          <p>Battle Plan v2.0</p>
+          <p>Army-style task prioritization with ACE+LMT scoring.</p>
+          <p>Works offline. Your data stays on your device.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Focus Mode Overlay -->
+    <div id="focus-overlay" class="overlay hidden">
+      <div class="focus-content">
+        <h2 id="focus-task-name">Task Name</h2>
+        <div id="focus-timer">25:00</div>
+        <div class="focus-controls">
+          <button id="focus-pause-btn" class="btn-secondary">Pause</button>
+          <button id="focus-stop-btn" class="btn-danger">Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Edit Modal -->
+    <div id="edit-modal" class="overlay hidden">
+      <div class="modal-content modal-large">
+        <h3>Edit Task</h3>
+
+        <input type="text" id="edit-text" placeholder="Task description">
+
+        <div class="edit-row">
+          <label>Next Action (specific step)</label>
+          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?">
+        </div>
+
+        <div class="edit-row">
+          <label>Tag</label>
+          <div class="tag-buttons">
+            <button class="tag-btn" data-tag="Home">Home</button>
+            <button class="tag-btn" data-tag="Army">Army</button>
+            <button class="tag-btn" data-tag="Business">Business</button>
+            <button class="tag-btn" data-tag="Other">Other</button>
+          </div>
+        </div>
+
+        <!-- Presets -->
+        <div class="edit-section">
+          <label>Quick Presets</label>
+          <div class="preset-buttons">
+            <button class="preset-btn" data-preset="mission-critical">Mission-critical</button>
+            <button class="preset-btn" data-preset="money-maker">Money-maker</button>
+            <button class="preset-btn" data-preset="admin-tax">Admin tax</button>
+            <button class="preset-btn" data-preset="quick-win">Quick win</button>
+            <button class="preset-btn" data-preset="waiting-on-others">Waiting</button>
+          </div>
+        </div>
+
+        <!-- ACE Scores -->
+        <div class="edit-section">
+          <label>ACE Scores</label>
+          <p class="section-desc">Core priority factors (higher = more important)</p>
+          <div class="score-group">
+            <div class="score-row">
+              <span class="score-label">A (Impact)</span>
+              <div class="score-buttons" data-field="A">
+                <button data-value="1">1</button>
+                <button data-value="2">2</button>
+                <button data-value="3">3</button>
+                <button data-value="4">4</button>
+                <button data-value="5">5</button>
+              </div>
+            </div>
+            <p class="score-hint">How much real value does completing this create? 1=trivial, 5=life-changing</p>
+          </div>
+          <div class="score-group">
+            <div class="score-row">
+              <span class="score-label">C (Consequences)</span>
+              <div class="score-buttons" data-field="C">
+                <button data-value="1">1</button>
+                <button data-value="2">2</button>
+                <button data-value="3">3</button>
+                <button data-value="4">4</button>
+                <button data-value="5">5</button>
+              </div>
+            </div>
+            <p class="score-hint">What happens if you DON'T do it? 1=nothing, 5=disaster (URGENT)</p>
+          </div>
+          <div class="score-group">
+            <div class="score-row">
+              <span class="score-label">E (Friction)</span>
+              <div class="score-buttons" data-field="E">
+                <button data-value="1">1</button>
+                <button data-value="2">2</button>
+                <button data-value="3">3</button>
+                <button data-value="4">4</button>
+                <button data-value="5">5</button>
+              </div>
+            </div>
+            <p class="score-hint">How much resistance/effort? 1=easy, 5=exhausting (lowers priority)</p>
+          </div>
+        </div>
+
+        <!-- LMT Bonuses -->
+        <div class="edit-section">
+          <label>LMT Bonuses</label>
+          <p class="section-desc">Bonus points for "do it NOW" factors</p>
+          <div class="score-group">
+            <div class="score-row">
+              <span class="score-label">L (Leverage)</span>
+              <div class="score-buttons" data-field="L">
+                <button data-value="0">0</button>
+                <button data-value="1">1</button>
+                <button data-value="2">2</button>
+              </div>
+            </div>
+            <p class="score-hint">Does this unlock other tasks? 0=standalone, 2=unblocks many things</p>
+          </div>
+          <div class="score-group">
+            <div class="score-row">
+              <span class="score-label">M (Energy)</span>
+              <div class="score-buttons" data-field="M">
+                <button data-value="0">0</button>
+                <button data-value="1">1</button>
+                <button data-value="2">2</button>
+              </div>
+            </div>
+            <p class="score-hint">Does it match your current energy? 0=wrong time, 2=perfect fit</p>
+          </div>
+          <div class="score-group">
+            <div class="score-row">
+              <span class="score-label">T (Time Reality)</span>
+              <div class="score-buttons" data-field="T">
+                <button data-value="0">0</button>
+                <button data-value="1">1</button>
+                <button data-value="2">2</button>
+              </div>
+            </div>
+            <p class="score-hint">Is NOW the right window? 0=anytime, 2=must be today</p>
+          </div>
+        </div>
+
+        <!-- Time Planning -->
+        <div class="edit-section">
+          <label>Time Estimate</label>
+          <p class="section-desc">How long will this take? (pick closest bucket)</p>
+          <div class="bucket-buttons">
+            <button class="bucket-btn" data-bucket="15">15m</button>
+            <button class="bucket-btn" data-bucket="30">30m</button>
+            <button class="bucket-btn" data-bucket="60">1h</button>
+            <button class="bucket-btn" data-bucket="90">1.5h</button>
+            <button class="bucket-btn" data-bucket="120">2h</button>
+            <button class="bucket-btn" data-bucket="180">3h</button>
+          </div>
+        </div>
+
+        <div class="edit-section">
+          <label>Confidence</label>
+          <p class="section-desc">How sure are you about that estimate?</p>
+          <div class="confidence-buttons">
+            <button class="confidence-btn" data-confidence="high">High</button>
+            <button class="confidence-btn" data-confidence="medium">Medium</button>
+            <button class="confidence-btn" data-confidence="low">Low</button>
+          </div>
+          <p class="score-hint">High = done this before, know exactly. Medium = rough idea. Low = new territory, could balloon. Lower confidence adds more buffer time to your daily capacity.</p>
+        </div>
+
+        <div class="edit-row">
+          <label>Scheduled For</label>
+          <input type="date" id="edit-scheduled">
+        </div>
+
+        <div class="edit-row">
+          <label>Due Date</label>
+          <input type="date" id="edit-due">
+        </div>
+
+        <div class="modal-actions">
+          <button id="edit-save-btn" class="btn-primary">Save</button>
+          <button id="edit-delete-btn" class="btn-danger">Delete</button>
+          <button id="edit-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actual Time Modal -->
+    <div id="actual-time-modal" class="overlay hidden">
+      <div class="modal-content">
+        <h3>How long did it actually take?</h3>
+        <div class="bucket-buttons">
+          <button class="actual-bucket-btn" data-bucket="15">15m</button>
+          <button class="actual-bucket-btn" data-bucket="30">30m</button>
+          <button class="actual-bucket-btn" data-bucket="60">1h</button>
+          <button class="actual-bucket-btn" data-bucket="90">1.5h</button>
+          <button class="actual-bucket-btn" data-bucket="120">2h</button>
+          <button class="actual-bucket-btn" data-bucket="180">3h</button>
+        </div>
+        <div class="modal-actions">
+          <button id="skip-actual-btn" class="btn-secondary">Skip</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Routine Edit Modal -->
+    <div id="routine-modal" class="overlay hidden">
+      <div class="modal-content">
+        <h3 id="routine-modal-title">Edit Routine</h3>
+        <input type="text" id="routine-edit-name" placeholder="Routine name">
+        <div class="routine-items-edit">
+          <div class="input-area">
+            <input type="text" id="routine-item-input" placeholder="Add checklist item...">
+            <button id="routine-item-add-btn">+</button>
+          </div>
+          <ul id="routine-items-list"></ul>
+        </div>
+        <div class="modal-actions">
+          <button id="routine-save-btn" class="btn-primary">Save</button>
+          <button id="routine-delete-btn" class="btn-danger">Delete</button>
+          <button id="routine-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Confirmation Modal -->
+    <div id="import-confirm-modal" class="overlay hidden">
+      <div class="modal-content">
+        <h3>⚠️ Import Data</h3>
+        <p class="import-warning">This will replace ALL your current data with the imported file.</p>
+        <p id="import-file-info"></p>
+        <div class="modal-actions">
+          <button id="import-confirm-btn" class="btn-danger">Import & Replace</button>
+          <button id="import-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/db.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
+    }
+  </script>
+</body>
+</html>
