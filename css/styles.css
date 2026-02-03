@@ -387,6 +387,38 @@ body {
 .item.status-done .item-text { text-decoration: line-through; }
 .item.overdue { border-left-color: var(--overdue) !important; }
 
+/* Due date urgency colors */
+.item.urgency-warning {
+  border-left-color: var(--warning) !important;
+  background: rgba(255, 193, 7, 0.08);
+}
+
+.item.urgency-urgent {
+  border-left-color: #ff8c00 !important;
+  background: rgba(255, 140, 0, 0.1);
+}
+
+.item.urgency-critical {
+  border-left-color: var(--danger) !important;
+  background: rgba(233, 69, 96, 0.12);
+}
+
+.item.urgency-overdue {
+  border-left-color: var(--overdue) !important;
+  background: rgba(255, 71, 87, 0.15);
+  animation: urgency-pulse 2s ease-in-out infinite;
+}
+
+@keyframes urgency-pulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 8px rgba(255, 71, 87, 0.3); }
+}
+
+.due-date.due-warning { color: var(--warning); }
+.due-date.due-urgent { color: #ff8c00; }
+.due-date.due-critical { color: var(--danger); font-weight: 600; }
+.due-date.due-overdue { color: var(--overdue); font-weight: 700; }
+
 .item-header {
   display: flex;
   align-items: flex-start;
@@ -936,6 +968,9 @@ body {
 .modal-actions button {
   flex: 1;
   min-width: 100px;
+  padding: var(--spacing-md) var(--spacing-lg);
+  font-size: var(--font-size-md);
+  min-height: 52px;
 }
 
 /* Import confirmation modal */
@@ -1397,4 +1432,82 @@ body {
 /* ==================== INPUT AREA WITH VOICE ==================== */
 .input-area input[type="text"] {
   flex: 1;
+}
+
+/* ==================== PAGE HINTS ==================== */
+.page-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  text-align: center;
+  font-style: italic;
+}
+
+/* ==================== HELP SECTION ==================== */
+.help-section {
+  padding: var(--spacing-sm) 0;
+}
+
+.help-section h4 {
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-md);
+  margin-bottom: var(--spacing-xs);
+}
+
+.help-section h4:first-child {
+  margin-top: 0;
+}
+
+.help-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.help-list li {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  padding: var(--spacing-xs) 0;
+  line-height: 1.4;
+}
+
+.help-list strong {
+  color: var(--text-primary);
+}
+
+.help-text {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  margin-top: var(--spacing-xs);
+}
+
+/* ==================== WAITING ON FIELD ==================== */
+#waiting-on-row {
+  display: none;
+}
+
+#waiting-on-row.visible {
+  display: block;
+}
+
+#waiting-on-row input {
+  margin-bottom: var(--spacing-xs);
+}
+
+/* Waiting badge on items */
+.waiting-on-badge {
+  display: inline-block;
+  background: var(--warning);
+  color: var(--bg-primary);
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-top: var(--spacing-xs);
+}
+
+.waiting-on-badge::before {
+  content: '⏳ ';
 }
