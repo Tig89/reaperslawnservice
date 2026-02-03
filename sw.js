@@ -3,15 +3,16 @@
  * Enables offline functionality
  */
 
-const CACHE_NAME = 'battle-plan-v1';
+const CACHE_NAME = 'battle-plan-v2';
+const BASE_PATH = '/reaperslawnservice';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/css/styles.css',
-  '/js/db.js',
-  '/js/app.js',
-  '/icons/icon.svg'
+  `${BASE_PATH}/`,
+  `${BASE_PATH}/index.html`,
+  `${BASE_PATH}/manifest.json`,
+  `${BASE_PATH}/css/styles.css`,
+  `${BASE_PATH}/js/db.js`,
+  `${BASE_PATH}/js/app.js`,
+  `${BASE_PATH}/icons/icon.svg`
 ];
 
 // Install event - cache assets
@@ -72,7 +73,7 @@ self.addEventListener('fetch', (event) => {
           .catch(() => {
             // Offline fallback for navigation requests
             if (event.request.mode === 'navigate') {
-              return caches.match('/index.html');
+              return caches.match(`${BASE_PATH}/index.html`);
             }
           });
       })
