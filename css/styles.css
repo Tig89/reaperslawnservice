@@ -958,6 +958,9 @@ body {
 .modal-actions button {
   flex: 1;
   min-width: 100px;
+  padding: var(--spacing-md) var(--spacing-lg);
+  font-size: var(--font-size-md);
+  min-height: 52px;
 }
 
 /* Import confirmation modal */
@@ -1419,4 +1422,82 @@ body {
 /* ==================== INPUT AREA WITH VOICE ==================== */
 .input-area input[type="text"] {
   flex: 1;
+}
+
+/* ==================== PAGE HINTS ==================== */
+.page-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  text-align: center;
+  font-style: italic;
+}
+
+/* ==================== HELP SECTION ==================== */
+.help-section {
+  padding: var(--spacing-sm) 0;
+}
+
+.help-section h4 {
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-md);
+  margin-bottom: var(--spacing-xs);
+}
+
+.help-section h4:first-child {
+  margin-top: 0;
+}
+
+.help-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.help-list li {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  padding: var(--spacing-xs) 0;
+  line-height: 1.4;
+}
+
+.help-list strong {
+  color: var(--text-primary);
+}
+
+.help-text {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  margin-top: var(--spacing-xs);
+}
+
+/* ==================== WAITING ON FIELD ==================== */
+#waiting-on-row {
+  display: none;
+}
+
+#waiting-on-row.visible {
+  display: block;
+}
+
+#waiting-on-row input {
+  margin-bottom: var(--spacing-xs);
+}
+
+/* Waiting badge on items */
+.waiting-on-badge {
+  display: inline-block;
+  background: var(--warning);
+  color: var(--bg-primary);
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-top: var(--spacing-xs);
+}
+
+.waiting-on-badge::before {
+  content: '⏳ ';
 }
