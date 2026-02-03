@@ -132,6 +132,16 @@ body {
   display: none;
 }
 
+/* HUD urgency colors */
+.hud-urgency-warning { color: var(--warning); }
+.hud-urgency-warning strong { color: var(--warning); }
+.hud-urgency-urgent { color: #ff8c00; }
+.hud-urgency-urgent strong { color: #ff8c00; }
+.hud-urgency-critical { color: var(--danger); }
+.hud-urgency-critical strong { color: var(--danger); }
+.hud-urgency-overdue { color: var(--overdue); }
+.hud-urgency-overdue strong { color: var(--overdue); }
+
 .capacity-warning {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
@@ -376,6 +386,38 @@ body {
 .item.status-done { opacity: 0.5; border-left-color: var(--text-muted); }
 .item.status-done .item-text { text-decoration: line-through; }
 .item.overdue { border-left-color: var(--overdue) !important; }
+
+/* Due date urgency colors */
+.item.urgency-warning {
+  border-left-color: var(--warning) !important;
+  background: rgba(255, 193, 7, 0.08);
+}
+
+.item.urgency-urgent {
+  border-left-color: #ff8c00 !important;
+  background: rgba(255, 140, 0, 0.1);
+}
+
+.item.urgency-critical {
+  border-left-color: var(--danger) !important;
+  background: rgba(233, 69, 96, 0.12);
+}
+
+.item.urgency-overdue {
+  border-left-color: var(--overdue) !important;
+  background: rgba(255, 71, 87, 0.15);
+  animation: urgency-pulse 2s ease-in-out infinite;
+}
+
+@keyframes urgency-pulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 8px rgba(255, 71, 87, 0.3); }
+}
+
+.due-date.due-warning { color: var(--warning); }
+.due-date.due-urgent { color: #ff8c00; }
+.due-date.due-critical { color: var(--danger); font-weight: 600; }
+.due-date.due-overdue { color: var(--overdue); font-weight: 700; }
 
 .item-header {
   display: flex;

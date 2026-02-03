@@ -32,6 +32,12 @@
           <span class="hud-item"><strong id="hud-unrated">0</strong> unrated</span>
           <span class="hud-item hud-overdue hidden" id="hud-overdue"><strong id="hud-overdue-count">0</strong> overdue</span>
         </div>
+        <div class="hud-row" id="hud-urgency-row" style="display:none">
+          <span class="hud-item hud-urgency-overdue" id="hud-due-overdue"><strong id="hud-due-overdue-count">0</strong> past due</span>
+          <span class="hud-item hud-urgency-critical" id="hud-due-critical"><strong id="hud-due-critical-count">0</strong> due today</span>
+          <span class="hud-item hud-urgency-urgent" id="hud-due-urgent"><strong id="hud-due-urgent-count">0</strong> due 1-3d</span>
+          <span class="hud-item hud-urgency-warning" id="hud-due-warning"><strong id="hud-due-warning-count">0</strong> due 4-7d</span>
+        </div>
         <div id="capacity-warning" class="capacity-warning hidden">
           Over capacity! Tap "Auto-balance" or remove tasks.
           <button id="auto-balance-btn" class="btn-sm">Auto-balance</button>
@@ -41,11 +47,7 @@
 
     <!-- Search Bar -->
     <div id="search-bar" class="search-bar">
-      <input type="text" id="search-input" placeholder="Search tasks...">
-      <label class="search-all-toggle">
-        <input type="checkbox" id="search-all-checkbox">
-        <span>All</span>
-      </label>
+      <input type="text" id="search-input" placeholder="Search all tasks...">
     </div>
 
     <!-- Navigation (scrollable) -->
@@ -156,11 +158,6 @@
 
         <div class="settings-section">
           <h3>Behavior</h3>
-          <div class="setting-row">
-            <label>Auto-roll tomorrow items to today</label>
-            <input type="checkbox" id="setting-auto-roll" checked>
-          </div>
-          <p class="setting-hint">When enabled, items scheduled for tomorrow automatically become today items at midnight.</p>
           <div class="setting-row">
             <label>Auto-clear Top 3 daily</label>
             <input type="checkbox" id="setting-top3-clear" checked>
