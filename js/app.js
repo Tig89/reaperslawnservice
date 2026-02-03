@@ -462,6 +462,22 @@ class BattlePlanApp {
     this.bindItemEvents();
   }
 
+  getDueUrgency(item) {
+    if (!item.dueDate || item.status === 'done') return { tier: '', label: '', daysLeft: null };
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const due = new Date(item.dueDate + 'T00:00:00');
+    const diffMs = due - now;
+    const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    if (daysLeft < 0) return { tier: 'urgency-overdue', label: `${Math.abs(daysLeft)}d overdue`, daysLeft };
+    if (daysLeft === 0) return { tier: 'urgency-critical', label: 'Due today', daysLeft };
+    if (daysLeft <= 3) return { tier: 'urgency-urgent', label: `${daysLeft}d left`, daysLeft };
+    if (daysLeft <= 7) return { tier: 'urgency-warning', label: `${daysLeft}d left`, daysLeft };
+    return { tier: '', label: `${daysLeft}d left`, daysLeft };
+  }
+
   renderItem(item, options = {}) {
     const { showPills = false, isTop3 = false, top3Number = null, showTop3Toggle = false } = options;
 
@@ -469,6 +485,8 @@ class BattlePlanApp {
     const selectedClass = item.id === this.selectedItemId ? 'selected' : '';
     const isOverdue = db.isOverdue(item);
     const overdueClass = isOverdue ? 'overdue' : '';
+    const urgency = this.getDueUrgency(item);
+    const urgencyClass = urgency.tier;
 
     // Handle date display - fallback to created field for older items
     const createdDate = new Date(item.created_at || item.created);
@@ -513,7 +531,9 @@ class BattlePlanApp {
       metaHtml += `<span class="item-scheduled">Scheduled: ${item.scheduled_for_date}</span>`;
     }
     if (item.dueDate) {
-      metaHtml += `<span class="due-date">Due: ${item.dueDate}</span>`;
+      const dueColorClass = urgency.tier ? `due-${urgency.tier.replace('urgency-', '')}` : '';
+      const dueLabel = urgency.label ? ` (${urgency.label})` : '';
+      metaHtml += `<span class="due-date ${dueColorClass}">Due: ${item.dueDate}${dueLabel}</span>`;
     }
 
     // Next action
@@ -568,7 +588,7 @@ class BattlePlanApp {
     return `
       <li class="item-wrapper" data-id="${item.id}">
         ${swipeLeftTray}
-        <div class="item ${statusClass} ${selectedClass} ${overdueClass}" data-id="${item.id}">
+        <div class="item ${statusClass} ${selectedClass} ${overdueClass} ${urgencyClass}" data-id="${item.id}">
           ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
           <div class="item-header">
             <div class="item-text">${this.escapeHtml(item.text)}</div>
