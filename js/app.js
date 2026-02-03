@@ -14,7 +14,6 @@ class BattlePlanApp {
     this.focusPaused = false;
     this.timerDefault = 25;
     this.searchQuery = '';
-    this.searchAll = false;
 
     // Edit modal state
     this.editState = {
@@ -75,11 +74,6 @@ class BattlePlanApp {
       this.render();
     });
 
-    document.getElementById('search-all-checkbox').addEventListener('change', (e) => {
-      this.searchAll = e.target.checked;
-      this.render();
-    });
-
     // Inbox
     document.getElementById('inbox-input').addEventListener('keydown', (e) => this.handleInboxKeydown(e));
     document.getElementById('inbox-add-btn').addEventListener('click', () => this.addInboxItem());
@@ -120,9 +114,6 @@ class BattlePlanApp {
     });
 
     // Behavior settings
-    document.getElementById('setting-auto-roll').addEventListener('change', (e) => {
-      db.setSetting('auto_roll_tomorrow_to_today', e.target.checked);
-    });
     document.getElementById('setting-top3-clear').addEventListener('change', (e) => {
       db.setSetting('top3_auto_clear_daily', e.target.checked);
     });
@@ -223,11 +214,9 @@ class BattlePlanApp {
     document.getElementById('setting-slack').value = slack;
 
     // Behavior settings
-    const autoRoll = await db.getSetting('auto_roll_tomorrow_to_today', true);
     const top3Clear = await db.getSetting('top3_auto_clear_daily', true);
     const swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
 
-    document.getElementById('setting-auto-roll').checked = autoRoll;
     document.getElementById('setting-top3-clear').checked = top3Clear;
     document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
   }
@@ -353,19 +342,13 @@ class BattlePlanApp {
 
     const query = this.searchQuery.toLowerCase().trim();
 
-    if (this.searchAll) {
-      // Search across all items
-      const allItems = await db.getAllItems();
-      return allItems.filter(item =>
-        item.text.toLowerCase().includes(query) ||
-        (item.next_action && item.next_action.toLowerCase().includes(query))
-      );
-    }
-
-    // Search within current view items
-    return items.filter(item =>
-      item.text.toLowerCase().includes(query) ||
-      (item.next_action && item.next_action.toLowerCase().includes(query))
+    // Always search across all items globally
+    const allItems = await db.getAllItems();
+    return allItems.filter(item =>
+      item.status !== 'done' &&
+      (item.text.toLowerCase().includes(query) ||
+      (item.next_action && item.next_action.toLowerCase().includes(query)) ||
+      (item.waiting_on && item.waiting_on.toLowerCase().includes(query)))
     );
   }
 

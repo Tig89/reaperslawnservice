@@ -648,7 +648,6 @@ class BattlePlanDB {
     const today = this.getToday();
     const items = await this.getAllItems();
 
-    const autoRoll = await this.getSetting('auto_roll_tomorrow_to_today', true);
     const autoClearTop3 = await this.getSetting('top3_auto_clear_daily', true);
 
     let overdueCount = 0;
@@ -656,14 +655,17 @@ class BattlePlanDB {
     let clearedTop3Count = 0;
 
     for (const item of items) {
+      if (item.status === 'done') continue;
+
       // Count overdue
       if (this.isOverdue(item)) {
         overdueCount++;
       }
 
-      // Auto-roll tomorrow to today
-      if (autoRoll && item.scheduled_for_date && item.scheduled_for_date < today && item.status !== 'done') {
-        // Already overdue, stays in today view automatically
+      // Auto-move scheduled items to today when their date arrives
+      if (item.scheduled_for_date && item.scheduled_for_date <= today && item.status !== 'today') {
+        await this.updateItem(item.id, { status: 'today' });
+        rolledCount++;
       }
 
       // Clear stale Top 3 (from previous days)
