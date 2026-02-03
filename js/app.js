@@ -14,7 +14,6 @@ class BattlePlanApp {
     this.focusPaused = false;
     this.timerDefault = 25;
     this.searchQuery = '';
-    this.searchAll = false;
 
     // Edit modal state
     this.editState = {
@@ -57,6 +56,16 @@ class BattlePlanApp {
     this.initVoiceInput();
 
     this.bindEvents();
+
+    // Handle initial page from URL hash (for back button support)
+    const hash = window.location.hash.slice(1);
+    const validPages = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'settings'];
+    if (hash && validPages.includes(hash)) {
+      this.navigateTo(hash, false);
+    }
+    // Set initial history state
+    history.replaceState({ page: this.currentPage }, '', `#${this.currentPage}`);
+
     this.render();
     this.updateHUD();
   }
@@ -69,14 +78,12 @@ class BattlePlanApp {
       btn.addEventListener('click', () => this.navigateTo(btn.dataset.page));
     });
 
+    // Handle browser back/forward buttons (Android back button support)
+    window.addEventListener('popstate', (e) => this.handlePopState(e));
+
     // Search
     document.getElementById('search-input').addEventListener('input', (e) => {
       this.searchQuery = e.target.value;
-      this.render();
-    });
-
-    document.getElementById('search-all-checkbox').addEventListener('change', (e) => {
-      this.searchAll = e.target.checked;
       this.render();
     });
 
@@ -120,9 +127,6 @@ class BattlePlanApp {
     });
 
     // Behavior settings
-    document.getElementById('setting-auto-roll').addEventListener('change', (e) => {
-      db.setSetting('auto_roll_tomorrow_to_today', e.target.checked);
-    });
     document.getElementById('setting-top3-clear').addEventListener('change', (e) => {
       db.setSetting('top3_auto_clear_daily', e.target.checked);
     });
@@ -223,18 +227,16 @@ class BattlePlanApp {
     document.getElementById('setting-slack').value = slack;
 
     // Behavior settings
-    const autoRoll = await db.getSetting('auto_roll_tomorrow_to_today', true);
     const top3Clear = await db.getSetting('top3_auto_clear_daily', true);
     const swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
 
-    document.getElementById('setting-auto-roll').checked = autoRoll;
     document.getElementById('setting-top3-clear').checked = top3Clear;
     document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
   }
 
   // ==================== NAVIGATION ====================
 
-  navigateTo(page) {
+  navigateTo(page, pushHistory = true) {
     this.currentPage = page;
     this.selectedItemId = null;
 
@@ -254,7 +256,22 @@ class BattlePlanApp {
       hud.classList.add('hidden');
     }
 
+    // Update browser history for Android back button support
+    if (pushHistory) {
+      history.pushState({ page }, '', `#${page}`);
+    }
+
     this.render();
+  }
+
+  // Handle browser back/forward buttons
+  handlePopState(event) {
+    if (event.state && event.state.page) {
+      this.navigateTo(event.state.page, false);
+    } else {
+      // Default to inbox if no state
+      this.navigateTo('inbox', false);
+    }
   }
 
   // ==================== HUD ====================
@@ -314,6 +331,37 @@ class BattlePlanApp {
     } else {
       warningEl.classList.add('hidden');
     }
+
+    // Urgency stats (across ALL non-done items)
+    const allItems = await db.getAllItems();
+    let dueOverdue = 0, dueCritical = 0, dueUrgent = 0, dueWarning = 0;
+
+    for (const item of allItems) {
+      const urgency = this.getDueUrgency(item);
+      if (urgency.tier === 'urgency-overdue') dueOverdue++;
+      else if (urgency.tier === 'urgency-critical') dueCritical++;
+      else if (urgency.tier === 'urgency-urgent') dueUrgent++;
+      else if (urgency.tier === 'urgency-warning') dueWarning++;
+    }
+
+    const totalDueItems = dueOverdue + dueCritical + dueUrgent + dueWarning;
+    const urgencyRow = document.getElementById('hud-urgency-row');
+
+    if (totalDueItems > 0) {
+      urgencyRow.style.display = '';
+      document.getElementById('hud-due-overdue-count').textContent = dueOverdue;
+      document.getElementById('hud-due-critical-count').textContent = dueCritical;
+      document.getElementById('hud-due-urgent-count').textContent = dueUrgent;
+      document.getElementById('hud-due-warning-count').textContent = dueWarning;
+
+      // Only show non-zero categories
+      document.getElementById('hud-due-overdue').style.display = dueOverdue ? '' : 'none';
+      document.getElementById('hud-due-critical').style.display = dueCritical ? '' : 'none';
+      document.getElementById('hud-due-urgent').style.display = dueUrgent ? '' : 'none';
+      document.getElementById('hud-due-warning').style.display = dueWarning ? '' : 'none';
+    } else {
+      urgencyRow.style.display = 'none';
+    }
   }
 
   // ==================== RENDERING ====================
@@ -353,19 +401,13 @@ class BattlePlanApp {
 
     const query = this.searchQuery.toLowerCase().trim();
 
-    if (this.searchAll) {
-      // Search across all items
-      const allItems = await db.getAllItems();
-      return allItems.filter(item =>
-        item.text.toLowerCase().includes(query) ||
-        (item.next_action && item.next_action.toLowerCase().includes(query))
-      );
-    }
-
-    // Search within current view items
-    return items.filter(item =>
-      item.text.toLowerCase().includes(query) ||
-      (item.next_action && item.next_action.toLowerCase().includes(query))
+    // Always search across all items globally
+    const allItems = await db.getAllItems();
+    return allItems.filter(item =>
+      item.status !== 'done' &&
+      (item.text.toLowerCase().includes(query) ||
+      (item.next_action && item.next_action.toLowerCase().includes(query)) ||
+      (item.waiting_on && item.waiting_on.toLowerCase().includes(query)))
     );
   }
 
@@ -462,6 +504,22 @@ class BattlePlanApp {
     this.bindItemEvents();
   }
 
+  getDueUrgency(item) {
+    if (!item.dueDate || item.status === 'done') return { tier: '', label: '', daysLeft: null };
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const due = new Date(item.dueDate + 'T00:00:00');
+    const diffMs = due - now;
+    const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    if (daysLeft < 0) return { tier: 'urgency-overdue', label: `${Math.abs(daysLeft)}d overdue`, daysLeft };
+    if (daysLeft === 0) return { tier: 'urgency-critical', label: 'Due today', daysLeft };
+    if (daysLeft <= 3) return { tier: 'urgency-urgent', label: `${daysLeft}d left`, daysLeft };
+    if (daysLeft <= 7) return { tier: 'urgency-warning', label: `${daysLeft}d left`, daysLeft };
+    return { tier: '', label: `${daysLeft}d left`, daysLeft };
+  }
+
   renderItem(item, options = {}) {
     const { showPills = false, isTop3 = false, top3Number = null, showTop3Toggle = false } = options;
 
@@ -469,6 +527,8 @@ class BattlePlanApp {
     const selectedClass = item.id === this.selectedItemId ? 'selected' : '';
     const isOverdue = db.isOverdue(item);
     const overdueClass = isOverdue ? 'overdue' : '';
+    const urgency = this.getDueUrgency(item);
+    const urgencyClass = urgency.tier;
 
     // Handle date display - fallback to created field for older items
     const createdDate = new Date(item.created_at || item.created);
@@ -513,7 +573,15 @@ class BattlePlanApp {
       metaHtml += `<span class="item-scheduled">Scheduled: ${item.scheduled_for_date}</span>`;
     }
     if (item.dueDate) {
-      metaHtml += `<span class="due-date">Due: ${item.dueDate}</span>`;
+      const dueColorClass = urgency.tier ? `due-${urgency.tier.replace('urgency-', '')}` : '';
+      const dueLabel = urgency.label ? ` (${urgency.label})` : '';
+      metaHtml += `<span class="due-date ${dueColorClass}">Due: ${item.dueDate}${dueLabel}</span>`;
+    }
+
+    // Waiting on badge
+    let waitingOnHtml = '';
+    if (item.status === 'waiting' && item.waiting_on) {
+      waitingOnHtml = `<div class="waiting-on-badge">${this.escapeHtml(item.waiting_on)}</div>`;
     }
 
     // Next action
@@ -568,13 +636,14 @@ class BattlePlanApp {
     return `
       <li class="item-wrapper" data-id="${item.id}">
         ${swipeLeftTray}
-        <div class="item ${statusClass} ${selectedClass} ${overdueClass}" data-id="${item.id}">
+        <div class="item ${statusClass} ${selectedClass} ${overdueClass} ${urgencyClass}" data-id="${item.id}">
           ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
           <div class="item-header">
             <div class="item-text">${this.escapeHtml(item.text)}</div>
             ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
           </div>
           ${nextActionHtml}
+          ${waitingOnHtml}
           ${badgesHtml}
           <div class="item-meta">
             ${metaHtml}
@@ -1380,6 +1449,15 @@ class BattlePlanApp {
     document.getElementById('edit-next-action').value = item.next_action || '';
     document.getElementById('edit-scheduled').value = item.scheduled_for_date || '';
     document.getElementById('edit-due').value = item.dueDate || '';
+    document.getElementById('edit-waiting-on').value = item.waiting_on || '';
+
+    // Show/hide waiting-on field based on status
+    const waitingOnRow = document.getElementById('waiting-on-row');
+    if (item.status === 'waiting') {
+      waitingOnRow.classList.add('visible');
+    } else {
+      waitingOnRow.classList.remove('visible');
+    }
 
     // Store edit state
     this.editState = {
@@ -1391,7 +1469,8 @@ class BattlePlanApp {
       T: item.T,
       tag: item.tag,
       estimate_bucket: item.estimate_bucket,
-      confidence: item.confidence
+      confidence: item.confidence,
+      waiting_on: item.waiting_on
     };
 
     // Update all button states
@@ -1463,6 +1542,13 @@ class BattlePlanApp {
     if (preset.estimate_bucket !== undefined) this.editState.estimate_bucket = preset.estimate_bucket;
     if (preset.confidence !== undefined) this.editState.confidence = preset.confidence;
 
+    // Show waiting_on row if this is the waiting preset
+    const waitingOnRow = document.getElementById('waiting-on-row');
+    if (preset.status === 'waiting') {
+      waitingOnRow.classList.add('visible');
+      document.getElementById('edit-waiting-on').focus();
+    }
+
     this.updateEditModalButtons();
   }
 
@@ -1479,6 +1565,7 @@ class BattlePlanApp {
       next_action: document.getElementById('edit-next-action').value.trim() || null,
       scheduled_for_date: document.getElementById('edit-scheduled').value || null,
       dueDate: document.getElementById('edit-due').value || null,
+      waiting_on: document.getElementById('edit-waiting-on').value.trim() || null,
       // ACE+LMT scores
       A: this.editState.A,
       C: this.editState.C,
