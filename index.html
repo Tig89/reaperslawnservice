@@ -63,6 +63,7 @@
     <main id="main">
       <!-- Inbox Page -->
       <section id="page-inbox" class="page active">
+        <p class="page-hint">Capture everything here first. Process later by moving to Today, Next, or Someday.</p>
         <div class="input-area">
           <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off">
           <button class="voice-btn" data-target="inbox-input" title="Voice input">🎤</button>
@@ -73,6 +74,7 @@
 
       <!-- Today Page -->
       <section id="page-today" class="page">
+        <p class="page-hint">Your committed tasks for today. Pick your Top 3 priorities and focus on those first.</p>
         <div class="today-actions">
           <button id="suggest-top3-btn" class="btn-secondary btn-sm">Suggest Top 3</button>
           <button id="rebuild-top3-btn" class="btn-secondary btn-sm">Rebuild Top 3</button>
@@ -91,26 +93,31 @@
 
       <!-- Tomorrow Page -->
       <section id="page-tomorrow" class="page">
+        <p class="page-hint">Tasks you've decided to tackle tomorrow. They'll roll to Today at midnight.</p>
         <ul id="tomorrow-list" class="item-list"></ul>
       </section>
 
       <!-- Next Page -->
       <section id="page-next" class="page">
+        <p class="page-hint">Ready to do soon, but not scheduled for a specific day. Your backlog of actionable items.</p>
         <ul id="next-list" class="item-list"></ul>
       </section>
 
       <!-- Waiting Page -->
       <section id="page-waiting" class="page">
+        <p class="page-hint">Blocked tasks waiting on someone else. Track who/what you're waiting for.</p>
         <ul id="waiting-list" class="item-list"></ul>
       </section>
 
       <!-- Someday Page -->
       <section id="page-someday" class="page">
+        <p class="page-hint">Ideas and "maybe later" tasks. No commitment, review occasionally.</p>
         <ul id="someday-list" class="item-list"></ul>
       </section>
 
       <!-- Done Page -->
       <section id="page-done" class="page">
+        <p class="page-hint">Completed tasks. Celebrate your wins!</p>
         <ul id="done-list" class="item-list"></ul>
       </section>
 
@@ -175,8 +182,47 @@
         </div>
 
         <div class="settings-section">
+          <h3>Quick Reference</h3>
+          <div class="help-section">
+            <h4>Views</h4>
+            <ul class="help-list">
+              <li><strong>Inbox</strong> - Capture everything here first</li>
+              <li><strong>Today</strong> - Committed tasks for today</li>
+              <li><strong>Tomorrow</strong> - Planned for tomorrow (rolls over at midnight)</li>
+              <li><strong>Next</strong> - Ready to do, not scheduled</li>
+              <li><strong>Waiting</strong> - Blocked on someone else</li>
+              <li><strong>Someday</strong> - Maybe later, no commitment</li>
+            </ul>
+
+            <h4>ACE Scores (Priority)</h4>
+            <ul class="help-list">
+              <li><strong>A (Impact)</strong> - Value created: 1=trivial, 5=life-changing</li>
+              <li><strong>C (Consequences)</strong> - Pain if skipped: 1=none, 5=disaster</li>
+              <li><strong>E (Friction)</strong> - Effort required: 1=easy, 5=exhausting (lowers priority)</li>
+            </ul>
+
+            <h4>LMT Bonuses (Do It Now)</h4>
+            <ul class="help-list">
+              <li><strong>L (Leverage)</strong> - Unblocks other tasks? 0-2</li>
+              <li><strong>M (Energy)</strong> - Matches current state? 0-2</li>
+              <li><strong>T (Time)</strong> - Must be today? 0-2</li>
+            </ul>
+
+            <h4>Top 3 Monster Rule</h4>
+            <p class="help-text">Your Top 3 can have at most 1 "monster" task (90+ min or low confidence). This prevents overcommitting.</p>
+
+            <h4>Gestures</h4>
+            <ul class="help-list">
+              <li><strong>Swipe Right</strong> - Mark as Done</li>
+              <li><strong>Swipe Left</strong> - Move to Tomorrow</li>
+              <li><strong>Double Tap</strong> - Edit task</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="settings-section">
           <h3>About</h3>
-          <p>Battle Plan v2.0</p>
+          <p>Battle Plan v2.1</p>
           <p>Army-style task prioritization with ACE+LMT scoring.</p>
           <p>Works offline. Your data stays on your device.</p>
         </div>
@@ -341,11 +387,19 @@
         <div class="edit-row">
           <label>Scheduled For</label>
           <input type="date" id="edit-scheduled">
+          <p class="score-hint">When will you WORK on this? (appears in Today/Tomorrow)</p>
         </div>
 
         <div class="edit-row">
           <label>Due Date</label>
           <input type="date" id="edit-due">
+          <p class="score-hint">When is it DUE? (deadline - shows overdue warning)</p>
+        </div>
+
+        <div class="edit-row" id="waiting-on-row">
+          <label>Waiting On</label>
+          <input type="text" id="edit-waiting-on" placeholder="Who/what are you waiting for?">
+          <p class="score-hint">e.g., "Bob to reply", "delivery", "client approval"</p>
         </div>
 
         <div class="modal-actions">

@@ -56,6 +56,16 @@ class BattlePlanApp {
     this.initVoiceInput();
 
     this.bindEvents();
+
+    // Handle initial page from URL hash (for back button support)
+    const hash = window.location.hash.slice(1);
+    const validPages = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'settings'];
+    if (hash && validPages.includes(hash)) {
+      this.navigateTo(hash, false);
+    }
+    // Set initial history state
+    history.replaceState({ page: this.currentPage }, '', `#${this.currentPage}`);
+
     this.render();
     this.updateHUD();
   }
@@ -67,6 +77,9 @@ class BattlePlanApp {
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', () => this.navigateTo(btn.dataset.page));
     });
+
+    // Handle browser back/forward buttons (Android back button support)
+    window.addEventListener('popstate', (e) => this.handlePopState(e));
 
     // Search
     document.getElementById('search-input').addEventListener('input', (e) => {
@@ -223,7 +236,7 @@ class BattlePlanApp {
 
   // ==================== NAVIGATION ====================
 
-  navigateTo(page) {
+  navigateTo(page, pushHistory = true) {
     this.currentPage = page;
     this.selectedItemId = null;
 
@@ -243,7 +256,22 @@ class BattlePlanApp {
       hud.classList.add('hidden');
     }
 
+    // Update browser history for Android back button support
+    if (pushHistory) {
+      history.pushState({ page }, '', `#${page}`);
+    }
+
     this.render();
+  }
+
+  // Handle browser back/forward buttons
+  handlePopState(event) {
+    if (event.state && event.state.page) {
+      this.navigateTo(event.state.page, false);
+    } else {
+      // Default to inbox if no state
+      this.navigateTo('inbox', false);
+    }
   }
 
   // ==================== HUD ====================
@@ -499,6 +527,12 @@ class BattlePlanApp {
       metaHtml += `<span class="due-date">Due: ${item.dueDate}</span>`;
     }
 
+    // Waiting on badge
+    let waitingOnHtml = '';
+    if (item.status === 'waiting' && item.waiting_on) {
+      waitingOnHtml = `<div class="waiting-on-badge">${this.escapeHtml(item.waiting_on)}</div>`;
+    }
+
     // Next action
     let nextActionHtml = '';
     if (item.next_action) {
@@ -558,6 +592,7 @@ class BattlePlanApp {
             ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
           </div>
           ${nextActionHtml}
+          ${waitingOnHtml}
           ${badgesHtml}
           <div class="item-meta">
             ${metaHtml}
@@ -1340,6 +1375,15 @@ class BattlePlanApp {
     document.getElementById('edit-next-action').value = item.next_action || '';
     document.getElementById('edit-scheduled').value = item.scheduled_for_date || '';
     document.getElementById('edit-due').value = item.dueDate || '';
+    document.getElementById('edit-waiting-on').value = item.waiting_on || '';
+
+    // Show/hide waiting-on field based on status
+    const waitingOnRow = document.getElementById('waiting-on-row');
+    if (item.status === 'waiting') {
+      waitingOnRow.classList.add('visible');
+    } else {
+      waitingOnRow.classList.remove('visible');
+    }
 
     // Store edit state
     this.editState = {
@@ -1351,7 +1395,8 @@ class BattlePlanApp {
       T: item.T,
       tag: item.tag,
       estimate_bucket: item.estimate_bucket,
-      confidence: item.confidence
+      confidence: item.confidence,
+      waiting_on: item.waiting_on
     };
 
     // Update all button states
@@ -1423,6 +1468,13 @@ class BattlePlanApp {
     if (preset.estimate_bucket !== undefined) this.editState.estimate_bucket = preset.estimate_bucket;
     if (preset.confidence !== undefined) this.editState.confidence = preset.confidence;
 
+    // Show waiting_on row if this is the waiting preset
+    const waitingOnRow = document.getElementById('waiting-on-row');
+    if (preset.status === 'waiting') {
+      waitingOnRow.classList.add('visible');
+      document.getElementById('edit-waiting-on').focus();
+    }
+
     this.updateEditModalButtons();
   }
 
@@ -1439,6 +1491,7 @@ class BattlePlanApp {
       next_action: document.getElementById('edit-next-action').value.trim() || null,
       scheduled_for_date: document.getElementById('edit-scheduled').value || null,
       dueDate: document.getElementById('edit-due').value || null,
+      waiting_on: document.getElementById('edit-waiting-on').value.trim() || null,
       // ACE+LMT scores
       A: this.editState.A,
       C: this.editState.C,

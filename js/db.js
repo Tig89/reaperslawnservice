@@ -624,6 +624,7 @@ class BattlePlanDB {
   async setTomorrow(id) {
     const tomorrow = this.getTomorrow();
     return this.updateItem(id, {
+      status: 'tomorrow',
       scheduled_for_date: tomorrow,
       // Clear Top 3 when moved out of today
       isTop3: false,
