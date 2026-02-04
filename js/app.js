@@ -1243,6 +1243,18 @@ class BattlePlanApp {
       await db.setTomorrow(id);
     } else if (status === 'today') {
       await db.setToday(id);
+    } else if (status === 'waiting') {
+      // Prompt for what they're waiting on
+      const waitingOn = prompt('What are you waiting on?', item.waiting_on || '');
+      if (waitingOn === null) return; // cancelled
+      const updates = {
+        status: 'waiting',
+        waiting_on: waitingOn.trim() || null,
+        scheduled_for_date: null,
+        isTop3: false,
+        top3Order: null
+      };
+      await db.updateItem(id, updates);
     } else if (item.status === status) {
       // Toggle off - return to inbox
       await db.updateItem(id, {
@@ -1451,14 +1463,6 @@ class BattlePlanApp {
     document.getElementById('edit-due').value = item.dueDate || '';
     document.getElementById('edit-waiting-on').value = item.waiting_on || '';
 
-    // Show/hide waiting-on field based on status
-    const waitingOnRow = document.getElementById('waiting-on-row');
-    if (item.status === 'waiting') {
-      waitingOnRow.classList.add('visible');
-    } else {
-      waitingOnRow.classList.remove('visible');
-    }
-
     // Store edit state
     this.editState = {
       A: item.A,
@@ -1542,10 +1546,8 @@ class BattlePlanApp {
     if (preset.estimate_bucket !== undefined) this.editState.estimate_bucket = preset.estimate_bucket;
     if (preset.confidence !== undefined) this.editState.confidence = preset.confidence;
 
-    // Show waiting_on row if this is the waiting preset
-    const waitingOnRow = document.getElementById('waiting-on-row');
+    // Focus waiting_on field if this is the waiting preset
     if (preset.status === 'waiting') {
-      waitingOnRow.classList.add('visible');
       document.getElementById('edit-waiting-on').focus();
     }
 
