@@ -1086,6 +1086,18 @@ body {
   accent-color: var(--accent);
 }
 
+/* Notification permission row */
+#notification-permission-row {
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+#notification-status {
+  font-size: var(--font-size-sm);
+  color: var(--success);
+  font-weight: bold;
+}
+
 .setting-hint {
   margin-top: calc(-1 * var(--spacing-sm));
   margin-bottom: var(--spacing-md);
@@ -1429,6 +1441,27 @@ body {
   content: '🎤 ';
 }
 
+.toast-undo {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.toast-undo .undo-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--border-radius);
+  font-weight: 600;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.toast-undo .undo-btn:active {
+  opacity: 0.8;
+}
+
 /* ==================== INPUT AREA WITH VOICE ==================== */
 .input-area input[type="text"] {
   flex: 1;
@@ -1482,6 +1515,41 @@ body {
   font-size: var(--font-size-xs);
   line-height: 1.4;
   margin-top: var(--spacing-xs);
+}
+
+/* ==================== RECURRENCE ====================*/
+.recurrence-options {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.recurrence-options select {
+  flex: 1;
+  padding: var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.recurrence-options select.hidden {
+  display: none;
+}
+
+/* Recurring task badge on items */
+.recurring-badge {
+  display: inline-block;
+  background: var(--accent-secondary);
+  color: var(--bg-primary);
+  font-size: var(--font-size-xs);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: var(--spacing-xs);
+}
+
+.recurring-badge::before {
+  content: '↻ ';
 }
 
 /* ==================== WAITING ON FIELD ==================== */

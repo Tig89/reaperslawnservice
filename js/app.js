@@ -39,6 +39,14 @@ class BattlePlanApp {
     this.isListening = false;
     this.voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
+    // Undo state
+    this.lastAction = null; // { type, itemId, previousState, description }
+    this.undoTimeout = null;
+
+    // Notification state
+    this.notificationsEnabled = localStorage.getItem('battlePlanNotifications') === 'true';
+    this.lastNotificationCheck = null;
+
     this.init();
   }
 
@@ -68,6 +76,12 @@ class BattlePlanApp {
 
     this.render();
     this.updateHUD();
+
+    // Check for due date notifications
+    setTimeout(() => this.checkDueNotifications(), 2000);
+
+    // Check periodically (every hour)
+    setInterval(() => this.checkDueNotifications(), 60 * 60 * 1000);
   }
 
   // ==================== EVENT BINDING ====================
@@ -135,6 +149,19 @@ class BattlePlanApp {
       db.setSetting('enable_swipe_gestures', e.target.checked);
     });
 
+    // Notification settings
+    document.getElementById('setting-notifications').addEventListener('change', (e) => {
+      this.notificationsEnabled = e.target.checked;
+      localStorage.setItem('battlePlanNotifications', e.target.checked);
+      if (e.target.checked) {
+        this.requestNotificationPermission();
+      }
+    });
+
+    document.getElementById('notification-permission-btn').addEventListener('click', () => {
+      this.requestNotificationPermission();
+    });
+
     // Voice input buttons
     document.querySelectorAll('.voice-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -175,6 +202,13 @@ class BattlePlanApp {
     // Edit Modal - Confidence buttons
     document.querySelectorAll('.confidence-btn').forEach(btn => {
       btn.addEventListener('click', () => this.selectConfidence(btn.dataset.confidence));
+    });
+
+    // Edit Modal - Recurrence select
+    document.getElementById('edit-recurrence').addEventListener('change', (e) => {
+      const daySelect = document.getElementById('edit-recurrence-day');
+      // Show day selector only for weekly recurrence
+      daySelect.classList.toggle('hidden', e.target.value !== 'weekly');
     });
 
     // Actual Time Modal
@@ -232,6 +266,10 @@ class BattlePlanApp {
 
     document.getElementById('setting-top3-clear').checked = top3Clear;
     document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
+
+    // Load notification setting
+    document.getElementById('setting-notifications').checked = this.notificationsEnabled;
+    this.updateNotificationStatus();
   }
 
   // ==================== NAVIGATION ====================
@@ -563,6 +601,11 @@ class BattlePlanApp {
 
     if (item.tag) {
       metaHtml += `<span class="tag tag-${item.tag}">${item.tag}</span>`;
+    }
+
+    if (item.recurrence) {
+      const recurrenceLabel = item.recurrence === 'daily' ? 'Daily' : item.recurrence === 'weekly' ? 'Weekly' : 'Monthly';
+      metaHtml += `<span class="recurring-badge">${recurrenceLabel}</span>`;
     }
 
     if (dateStr) {
@@ -965,9 +1008,11 @@ class BattlePlanApp {
         await this.setItemStatus(itemId, 'done');
         break;
       case 'tomorrow':
+        await this.saveForUndo(itemId, 'Moved to Tomorrow');
         await db.setTomorrow(itemId);
         await this.render();
         await this.updateHUD();
+        this.showUndoToast('Moved to Tomorrow');
         break;
       case 'edit':
         this.openEditModal(itemId);
@@ -1200,6 +1245,150 @@ class BattlePlanApp {
     }
   }
 
+  // ==================== UNDO ====================
+
+  async saveForUndo(itemId, description) {
+    const item = await db.getItem(itemId);
+    if (item) {
+      this.lastAction = {
+        itemId,
+        previousState: { ...item },
+        description,
+        timestamp: Date.now()
+      };
+    }
+  }
+
+  showUndoToast(message) {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      document.body.appendChild(toast);
+    }
+
+    toast.innerHTML = `
+      <span>${message}</span>
+      <button class="undo-btn" onclick="app.undo()">Undo</button>
+    `;
+    toast.className = 'toast toast-undo visible';
+
+    // Clear previous timeout
+    if (this.undoTimeout) clearTimeout(this.undoTimeout);
+
+    // Auto-hide after 5 seconds (longer than normal to give time to undo)
+    this.undoTimeout = setTimeout(() => {
+      this.hideToast();
+      this.lastAction = null;
+    }, 5000);
+  }
+
+  async undo() {
+    if (!this.lastAction) {
+      this.showToast('Nothing to undo');
+      return;
+    }
+
+    const { itemId, previousState } = this.lastAction;
+
+    // Restore the previous state
+    await db.updateItem(itemId, previousState);
+
+    this.hideToast();
+    this.lastAction = null;
+    this.showToast('Undone!');
+
+    await this.render();
+    await this.updateHUD();
+  }
+
+  // ==================== NOTIFICATIONS ====================
+
+  async requestNotificationPermission() {
+    if (!('Notification' in window)) {
+      this.showToast('Notifications not supported in this browser');
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    this.updateNotificationStatus();
+
+    if (permission === 'granted') {
+      this.showToast('Notifications enabled!');
+      // Start checking for due tasks
+      this.checkDueNotifications();
+    } else if (permission === 'denied') {
+      this.showToast('Notifications blocked. Check browser settings.');
+      document.getElementById('setting-notifications').checked = false;
+      this.notificationsEnabled = false;
+      localStorage.setItem('battlePlanNotifications', 'false');
+    }
+  }
+
+  updateNotificationStatus() {
+    const statusEl = document.getElementById('notification-status');
+    const btnEl = document.getElementById('notification-permission-btn');
+
+    if (!('Notification' in window)) {
+      statusEl.textContent = 'Not supported';
+      btnEl.style.display = 'none';
+      return;
+    }
+
+    const permission = Notification.permission;
+    if (permission === 'granted') {
+      statusEl.textContent = 'Enabled';
+      btnEl.style.display = 'none';
+    } else if (permission === 'denied') {
+      statusEl.textContent = 'Blocked';
+      btnEl.textContent = 'Check Browser Settings';
+    } else {
+      statusEl.textContent = '';
+      btnEl.textContent = 'Enable Browser Notifications';
+    }
+  }
+
+  async checkDueNotifications() {
+    if (!this.notificationsEnabled || Notification.permission !== 'granted') {
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Only check once per day
+    if (this.lastNotificationCheck === today) {
+      return;
+    }
+    this.lastNotificationCheck = today;
+
+    const items = await db.getAllItems();
+    const urgentTasks = items.filter(item => {
+      if (item.status === 'done' || !item.dueDate) return false;
+      const daysUntil = this.getDaysUntilDue(item.dueDate);
+      return daysUntil !== null && daysUntil <= 3 && daysUntil >= 0;
+    });
+
+    if (urgentTasks.length > 0) {
+      const taskList = urgentTasks.slice(0, 3).map(t => `• ${t.text}`).join('\n');
+      const moreText = urgentTasks.length > 3 ? `\n...and ${urgentTasks.length - 3} more` : '';
+
+      new Notification('Battle Plan - Due Soon', {
+        body: `${urgentTasks.length} task(s) due within 3 days:\n${taskList}${moreText}`,
+        icon: '/reaperslawnservice/icons/icon.svg',
+        tag: 'due-reminder'
+      });
+    }
+  }
+
+  getDaysUntilDue(dueDate) {
+    if (!dueDate) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDate + 'T00:00:00');
+    const diffTime = due.getTime() - today.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+
   selectItem(id) {
     this.selectedItemId = this.selectedItemId === id ? null : id;
     document.querySelectorAll('.item').forEach(item => {
@@ -1230,6 +1419,9 @@ class BattlePlanApp {
   async setItemStatus(id, status) {
     const item = await db.getItem(id);
 
+    // Save for undo before making changes
+    await this.saveForUndo(id, `Moved to ${status}`);
+
     if (status === 'done') {
       // Check if item has estimate - prompt for actual time
       if (item.estimate_bucket) {
@@ -1239,10 +1431,14 @@ class BattlePlanApp {
       }
     }
 
+    let actionDescription = '';
+
     if (status === 'tomorrow') {
       await db.setTomorrow(id);
+      actionDescription = 'Moved to Tomorrow';
     } else if (status === 'today') {
       await db.setToday(id);
+      actionDescription = 'Moved to Today';
     } else if (status === 'waiting') {
       // Prompt for what they're waiting on
       const waitingOn = prompt('What are you waiting on?', item.waiting_on || '');
@@ -1255,6 +1451,7 @@ class BattlePlanApp {
         top3Order: null
       };
       await db.updateItem(id, updates);
+      actionDescription = 'Moved to Waiting';
     } else if (item.status === status) {
       // Toggle off - return to inbox
       await db.updateItem(id, {
@@ -1263,6 +1460,7 @@ class BattlePlanApp {
         top3Order: null,
         scheduled_for_date: null
       });
+      actionDescription = 'Moved to Inbox';
     } else {
       const updates = {
         status,
@@ -1273,10 +1471,16 @@ class BattlePlanApp {
         updates.top3Order = null;
       }
       await db.updateItem(id, updates);
+      actionDescription = status === 'done' ? 'Marked Done' : `Moved to ${status.charAt(0).toUpperCase() + status.slice(1)}`;
     }
 
     await this.render();
     await this.updateHUD();
+
+    // Show undo toast
+    if (actionDescription) {
+      this.showUndoToast(actionDescription);
+    }
   }
 
   // ==================== TOP 3 SUGGESTION ====================
@@ -1387,6 +1591,7 @@ class BattlePlanApp {
 
     await this.render();
     await this.updateHUD();
+    this.showUndoToast('Marked Done');
   }
 
   async skipActualTime() {
@@ -1402,6 +1607,7 @@ class BattlePlanApp {
 
     await this.render();
     await this.updateHUD();
+    this.showUndoToast('Marked Done');
   }
 
   // ==================== KEYBOARD SHORTCUTS ====================
@@ -1463,6 +1669,13 @@ class BattlePlanApp {
     document.getElementById('edit-due').value = item.dueDate || '';
     document.getElementById('edit-waiting-on').value = item.waiting_on || '';
 
+    // Set recurrence fields
+    const recurrenceSelect = document.getElementById('edit-recurrence');
+    const recurrenceDaySelect = document.getElementById('edit-recurrence-day');
+    recurrenceSelect.value = item.recurrence || '';
+    recurrenceDaySelect.value = item.recurrence_day || '0';
+    recurrenceDaySelect.classList.toggle('hidden', item.recurrence !== 'weekly');
+
     // Store edit state
     this.editState = {
       A: item.A,
@@ -1474,7 +1687,9 @@ class BattlePlanApp {
       tag: item.tag,
       estimate_bucket: item.estimate_bucket,
       confidence: item.confidence,
-      waiting_on: item.waiting_on
+      waiting_on: item.waiting_on,
+      recurrence: item.recurrence,
+      recurrence_day: item.recurrence_day
     };
 
     // Update all button states
@@ -1562,6 +1777,9 @@ class BattlePlanApp {
   async saveEditItem() {
     if (!this.editingItemId) return;
 
+    const recurrenceValue = document.getElementById('edit-recurrence').value;
+    const recurrenceDayValue = document.getElementById('edit-recurrence-day').value;
+
     const updates = {
       text: document.getElementById('edit-text').value.trim(),
       next_action: document.getElementById('edit-next-action').value.trim() || null,
@@ -1579,7 +1797,10 @@ class BattlePlanApp {
       tag: this.editState.tag,
       // Time planning
       estimate_bucket: this.editState.estimate_bucket,
-      confidence: this.editState.confidence
+      confidence: this.editState.confidence,
+      // Recurrence
+      recurrence: recurrenceValue || null,
+      recurrence_day: recurrenceValue === 'weekly' ? parseInt(recurrenceDayValue) : null
     };
 
     await db.updateItem(this.editingItemId, updates);

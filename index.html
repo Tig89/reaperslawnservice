@@ -171,6 +171,19 @@
         </div>
 
         <div class="settings-section">
+          <h3>Notifications</h3>
+          <div class="setting-row">
+            <label>Enable due date reminders</label>
+            <input type="checkbox" id="setting-notifications">
+          </div>
+          <p class="setting-hint">Get notified about tasks approaching their due date.</p>
+          <div class="setting-row" id="notification-permission-row">
+            <button id="notification-permission-btn" class="btn-secondary">Enable Browser Notifications</button>
+            <span id="notification-status"></span>
+          </div>
+        </div>
+
+        <div class="settings-section">
           <h3>Focus Timer</h3>
           <div class="timer-options">
             <button class="timer-preset" data-minutes="25">25 min</button>
@@ -400,6 +413,28 @@
           <label>Due Date</label>
           <input type="date" id="edit-due">
           <p class="score-hint">When is it DUE? (deadline - shows overdue warning)</p>
+        </div>
+
+        <div class="edit-row">
+          <label>Repeat</label>
+          <div class="recurrence-options">
+            <select id="edit-recurrence">
+              <option value="">No repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            <select id="edit-recurrence-day" class="hidden">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </div>
+          <p class="score-hint">When completed, a new task is created for the next occurrence</p>
         </div>
 
         <div class="edit-row" id="waiting-on-row">
