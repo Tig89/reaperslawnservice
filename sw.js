@@ -1,9 +1,9 @@
 /**
- * Battle Plan - Service Worker
- * Enables offline functionality
+ * Battle Plan - Service Worker v3
+ * Network-first strategy: always fetch fresh when online, cache for offline
  */
 
-const CACHE_NAME = 'battle-plan-v2';
+const CACHE_NAME = 'battle-plan-v3';
 const BASE_PATH = '/reaperslawnservice';
 const ASSETS_TO_CACHE = [
   `${BASE_PATH}/`,
@@ -15,63 +15,52 @@ const ASSETS_TO_CACHE = [
   `${BASE_PATH}/icons/icon.svg`
 ];
 
-// Install event - cache assets
+// Install event - cache assets and skip waiting immediately
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Caching app assets');
-        return cache.addAll(ASSETS_TO_CACHE);
-      })
+      .then((cache) => cache.addAll(ASSETS_TO_CACHE))
       .then(() => self.skipWaiting())
   );
 });
 
-// Activate event - clean old caches
+// Activate event - delete ALL old caches and take control immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
           .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+          .map((name) => {
+            console.log('Deleting old cache:', name);
+            return caches.delete(name);
+          })
       );
     }).then(() => self.clients.claim())
   );
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - NETWORK FIRST, fall back to cache when offline
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        if (cachedResponse) {
-          // Return cached version
-          return cachedResponse;
+    fetch(event.request)
+      .then((response) => {
+        // Got a fresh response - cache it for offline use
+        if (response && response.status === 200) {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, responseToCache));
         }
-
-        // Not in cache, fetch from network
-        return fetch(event.request)
-          .then((response) => {
-            // Don't cache non-successful responses
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-
-            // Clone and cache the response
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME)
-              .then((cache) => {
-                cache.put(event.request, responseToCache);
-              });
-
-            return response;
-          })
-          .catch(() => {
-            // Offline fallback for navigation requests
+        return response;
+      })
+      .catch(() => {
+        // Network failed - serve from cache (offline mode)
+        return caches.match(event.request)
+          .then((cachedResponse) => {
+            if (cachedResponse) return cachedResponse;
+            // Offline fallback for navigation
             if (event.request.mode === 'navigate') {
               return caches.match(`${BASE_PATH}/index.html`);
             }
