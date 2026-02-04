@@ -1311,31 +1311,54 @@ class BattlePlanApp {
   }
 
   async autoBalance() {
-    // Remove lowest priority items from Top 3 until under capacity
     const usableCapacity = await db.getUsableCapacity();
-    let top3Items = await db.getTop3Items();
+    const todayItems = await db.getTodayItems();
 
-    // Calculate scores and sort by priority (lowest first for removal)
-    const scored = await Promise.all(top3Items.map(async item => {
+    // Score all today items
+    const scored = await Promise.all(todayItems.map(async item => {
       const scores = db.calculateScores(item);
       const bufferedMinutes = await db.getBufferedMinutes(item);
-      return { ...item, ...scores, bufferedMinutes };
+      return { ...item, ...scores, bufferedMinutes: bufferedMinutes || 0 };
     }));
 
-    scored.sort((a, b) => (a.priority_score || 0) - (b.priority_score || 0));
+    let totalBuffered = scored.reduce((sum, i) => sum + i.bufferedMinutes, 0);
 
-    let totalBuffered = scored.reduce((sum, i) => sum + (i.bufferedMinutes || 0), 0);
-
-    // Remove lowest priority items until under capacity
-    for (const item of scored) {
-      if (totalBuffered <= usableCapacity) break;
-
-      await db.updateItem(item.id, { isTop3: false, top3Order: null });
-      totalBuffered -= item.bufferedMinutes || 0;
+    if (totalBuffered <= usableCapacity) {
+      this.showToast('Already within capacity');
+      return;
     }
 
-    // Hide warning
-    document.getElementById('capacity-warning').classList.add('hidden');
+    // Separate Top 3 (keep) from non-Top 3 (candidates to move)
+    const top3 = scored.filter(i => i.isTop3);
+    const others = scored.filter(i => !i.isTop3);
+
+    // Sort non-Top 3 by priority: lowest first (remove least important first)
+    others.sort((a, b) => (a.priority_score || 0) - (b.priority_score || 0));
+
+    let movedCount = 0;
+
+    // Move lowest-priority non-Top 3 items to Tomorrow
+    for (const item of others) {
+      if (totalBuffered <= usableCapacity) break;
+
+      await db.setTomorrow(item.id);
+      totalBuffered -= item.bufferedMinutes;
+      movedCount++;
+    }
+
+    // If still over capacity after moving all non-Top 3, remove lowest Top 3
+    if (totalBuffered > usableCapacity) {
+      const top3Sorted = [...top3].sort((a, b) => (a.priority_score || 0) - (b.priority_score || 0));
+      for (const item of top3Sorted) {
+        if (totalBuffered <= usableCapacity) break;
+
+        await db.setTomorrow(item.id);
+        totalBuffered -= item.bufferedMinutes;
+        movedCount++;
+      }
+    }
+
+    this.showToast(`Moved ${movedCount} task${movedCount !== 1 ? 's' : ''} to Tomorrow`);
 
     await this.render();
     await this.updateHUD();
