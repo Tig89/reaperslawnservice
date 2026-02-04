@@ -669,6 +669,18 @@ class BattlePlanDB {
         rolledCount++;
       }
 
+      // Auto-move items to today when due date is within 7 days
+      if (item.dueDate && item.status !== 'today') {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const due = new Date(item.dueDate + 'T00:00:00');
+        const daysUntilDue = Math.ceil((due - now) / (1000 * 60 * 60 * 24));
+        if (daysUntilDue <= 7) {
+          await this.updateItem(item.id, { status: 'today' });
+          rolledCount++;
+        }
+      }
+
       // Clear stale Top 3 (from previous days)
       if (autoClearTop3 && item.isTop3 && item.top3Date && item.top3Date !== today) {
         if (!item.top3Locked) {
