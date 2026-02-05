@@ -19,6 +19,7 @@
     <header id="header">
       <div class="header-top">
         <h1>Battle Plan</h1>
+        <span id="offline-indicator" class="offline-indicator hidden">Offline</span>
       </div>
       <!-- HUD - Today Stats -->
       <div id="hud" class="hud hidden">
@@ -61,6 +62,7 @@
         <button class="nav-btn" data-page="someday">Someday</button>
         <button class="nav-btn" data-page="done">Done</button>
         <button class="nav-btn" data-page="routines">Routines</button>
+        <button class="nav-btn" data-page="analytics">Stats</button>
         <button class="nav-btn" data-page="settings">&#9881;</button>
       </div>
     </nav>
@@ -136,6 +138,56 @@
         <ul id="routines-list" class="routines-list"></ul>
       </section>
 
+      <!-- Analytics Page -->
+      <section id="page-analytics" class="page">
+        <h2>Stats & Analytics</h2>
+        <p class="page-hint">Track your productivity and estimation accuracy</p>
+
+        <div class="analytics-cards">
+          <div class="analytics-card">
+            <h3>This Week</h3>
+            <div class="stat-row">
+              <span>Tasks completed</span>
+              <strong id="stat-week-completed">0</strong>
+            </div>
+            <div class="stat-row">
+              <span>Total time</span>
+              <strong id="stat-week-time">0h</strong>
+            </div>
+          </div>
+
+          <div class="analytics-card">
+            <h3>Estimation Accuracy</h3>
+            <div class="stat-row">
+              <span>Average accuracy</span>
+              <strong id="stat-accuracy">-</strong>
+            </div>
+            <div class="stat-row">
+              <span>Tasks with estimates</span>
+              <strong id="stat-estimated-count">0</strong>
+            </div>
+            <p class="stat-hint" id="stat-accuracy-hint"></p>
+          </div>
+
+          <div class="analytics-card">
+            <h3>All Time</h3>
+            <div class="stat-row">
+              <span>Total completed</span>
+              <strong id="stat-total-completed">0</strong>
+            </div>
+            <div class="stat-row">
+              <span>Avg per week</span>
+              <strong id="stat-avg-per-week">0</strong>
+            </div>
+          </div>
+
+          <div class="analytics-card">
+            <h3>By Tag</h3>
+            <div id="stat-by-tag"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- Settings Page -->
       <section id="page-settings" class="page">
         <h2>Settings</h2>
@@ -168,6 +220,40 @@
             <input type="checkbox" id="setting-swipe-gestures" checked>
           </div>
           <p class="setting-hint">Swipe tasks left/right for quick actions. Right = Done, Left = Tomorrow. Works best on touch screens.</p>
+          <div class="setting-row">
+            <label>Swipe sensitivity</label>
+            <select id="setting-swipe-threshold">
+              <option value="0.35">High (35%)</option>
+              <option value="0.45" selected>Medium (45%)</option>
+              <option value="0.55">Low (55%)</option>
+            </select>
+          </div>
+          <p class="setting-hint">How far you need to swipe to trigger the action.</p>
+        </div>
+
+        <div class="settings-section">
+          <h3>Appearance</h3>
+          <div class="setting-row">
+            <label>Theme</label>
+            <div class="theme-toggle">
+              <button id="theme-dark" class="theme-btn active">Dark</button>
+              <button id="theme-light" class="theme-btn">Light</button>
+              <button id="theme-system" class="theme-btn">System</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Notifications</h3>
+          <div class="setting-row">
+            <label>Enable due date reminders</label>
+            <input type="checkbox" id="setting-notifications">
+          </div>
+          <p class="setting-hint">Get notified about tasks approaching their due date.</p>
+          <div class="setting-row" id="notification-permission-row">
+            <button id="notification-permission-btn" class="btn-secondary">Enable Browser Notifications</button>
+            <span id="notification-status"></span>
+          </div>
         </div>
 
         <div class="settings-section">
@@ -185,6 +271,9 @@
           <button id="export-btn" class="btn-secondary">Export JSON</button>
           <button id="import-btn" class="btn-secondary">Import JSON</button>
           <input type="file" id="import-file" accept=".json" hidden>
+          <div id="storage-info" class="storage-info">
+            <span>Storage: </span><span id="storage-usage">Calculating...</span>
+          </div>
         </div>
 
         <div class="settings-section">
@@ -248,7 +337,7 @@
     </div>
 
     <!-- Item Edit Modal -->
-    <div id="edit-modal" class="overlay hidden">
+    <div id="edit-modal" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
       <div class="modal-content modal-large">
         <h3>Edit Task</h3>
 
@@ -257,6 +346,11 @@
         <div class="edit-row">
           <label>Next Action (specific step)</label>
           <input type="text" id="edit-next-action" placeholder="What's the very next physical action?">
+        </div>
+
+        <div class="edit-row">
+          <label>Notes</label>
+          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3"></textarea>
         </div>
 
         <div class="edit-row">
@@ -402,10 +496,43 @@
           <p class="score-hint">When is it DUE? (deadline - shows overdue warning)</p>
         </div>
 
+        <div class="edit-row">
+          <label>Repeat</label>
+          <div class="recurrence-options">
+            <select id="edit-recurrence">
+              <option value="">No repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            <select id="edit-recurrence-day" class="hidden">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </div>
+          <p class="score-hint">When completed, a new task is created for the next occurrence</p>
+        </div>
+
         <div class="edit-row" id="waiting-on-row">
           <label>Waiting On</label>
           <input type="text" id="edit-waiting-on" placeholder="Who/what are you waiting for?">
           <p class="score-hint">e.g., "Bob to reply", "delivery", "client approval"</p>
+        </div>
+
+        <!-- Sub-tasks section -->
+        <div class="edit-section" id="subtasks-section">
+          <label>Sub-tasks</label>
+          <ul id="subtasks-list" class="subtasks-list"></ul>
+          <div class="subtask-add">
+            <input type="text" id="subtask-input" placeholder="Add a sub-task...">
+            <button id="add-subtask-btn" class="btn-sm">Add</button>
+          </div>
+          <p class="score-hint">Break down large tasks into smaller steps</p>
         </div>
 
         <div class="modal-actions">
@@ -417,7 +544,7 @@
     </div>
 
     <!-- Actual Time Modal -->
-    <div id="actual-time-modal" class="overlay hidden">
+    <div id="actual-time-modal" class="overlay hidden" role="dialog" aria-modal="true">
       <div class="modal-content">
         <h3>How long did it actually take?</h3>
         <div class="bucket-buttons">
@@ -463,6 +590,19 @@
         <div class="modal-actions">
           <button id="import-confirm-btn" class="btn-danger">Import & Replace</button>
           <button id="import-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Waiting On Modal -->
+    <div id="waiting-modal" class="overlay hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <h3>What are you waiting on?</h3>
+        <p class="modal-hint">e.g., "Bob to reply", "delivery", "client approval"</p>
+        <input type="text" id="waiting-input" placeholder="Enter what you're waiting for...">
+        <div class="modal-actions">
+          <button id="waiting-confirm-btn" class="btn-primary">Move to Waiting</button>
+          <button id="waiting-cancel-btn" class="btn-secondary">Cancel</button>
         </div>
       </div>
     </div>

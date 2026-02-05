@@ -131,6 +131,15 @@ class BattlePlanDB {
       // Scheduling
       scheduled_for_date: null,
       dueDate: null,
+      // Recurrence
+      recurrence: null, // 'daily', 'weekly', 'monthly', or null
+      recurrence_day: null, // 0-6 for weekly (0=Sunday), 1-31 for monthly
+      // Waiting
+      waiting_on: null,
+      // Notes
+      notes: null,
+      // Sub-tasks
+      parent_id: null, // ID of parent task, null if top-level
       // Timestamps
       created_at: now,
       updated_at: now
@@ -140,7 +149,10 @@ class BattlePlanDB {
       const tx = this.db.transaction('items', 'readwrite');
       const store = tx.objectStore('items');
       const request = store.add(item);
-      request.onsuccess = () => resolve(item);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(item);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -171,7 +183,10 @@ class BattlePlanDB {
       const tx = this.db.transaction('items', 'readwrite');
       const store = tx.objectStore('items');
       const request = store.put(updated);
-      request.onsuccess = () => resolve(updated);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(updated);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -182,7 +197,10 @@ class BattlePlanDB {
       const tx = this.db.transaction('items', 'readwrite');
       const store = tx.objectStore('items');
       const request = store.delete(id);
-      request.onsuccess = () => resolve(true);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(true);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -196,6 +214,64 @@ class BattlePlanDB {
       request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
+  }
+
+  // ==================== SUB-TASKS ====================
+
+  async getSubtasks(parentId) {
+    const allItems = await this.getAllItems();
+    return allItems.filter(item => item.parent_id === parentId);
+  }
+
+  async addSubtask(parentId, text) {
+    await this.ready;
+    const parent = await this.getItem(parentId);
+    if (!parent) return null;
+
+    const now = new Date().toISOString();
+    const subtask = {
+      id: this.generateId(),
+      text: text.trim(),
+      status: parent.status, // Inherit parent's status
+      tag: parent.tag, // Inherit parent's tag
+      next_action: null,
+      A: null, C: null, E: null,
+      L: null, M: null, T: null,
+      estimate_bucket: null,
+      confidence: null,
+      actual_bucket: null,
+      isTop3: false,
+      top3Order: null,
+      top3Date: null,
+      top3Locked: false,
+      scheduled_for_date: parent.scheduled_for_date,
+      dueDate: parent.dueDate, // Inherit due date
+      recurrence: null,
+      recurrence_day: null,
+      waiting_on: null,
+      notes: null,
+      parent_id: parentId,
+      created_at: now,
+      updated_at: now
+    };
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readwrite');
+      const store = tx.objectStore('items');
+      const request = store.add(subtask);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(subtask);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getSubtaskProgress(parentId) {
+    const subtasks = await this.getSubtasks(parentId);
+    if (subtasks.length === 0) return null;
+    const completed = subtasks.filter(t => t.status === 'done').length;
+    return { completed, total: subtasks.length };
   }
 
   // ==================== FULLY RATED PREDICATE ====================
@@ -349,6 +425,8 @@ class BattlePlanDB {
     const today = this.getToday();
 
     return items.filter(i => {
+      // Exclude subtasks from main lists
+      if (i.parent_id) return false;
       if (i.status === 'done') return false;
 
       // Explicit today status
@@ -586,13 +664,13 @@ class BattlePlanDB {
     const items = await this.getAllItems();
     const tomorrow = this.getTomorrow();
     return items.filter(i =>
-      i.status !== 'done' && i.scheduled_for_date === tomorrow
+      !i.parent_id && i.status !== 'done' && i.scheduled_for_date === tomorrow
     );
   }
 
   async getItemsByStatus(status) {
     const items = await this.getAllItems();
-    return items.filter(i => i.status === status);
+    return items.filter(i => !i.parent_id && i.status === status);
   }
 
   // ==================== STATS ====================
@@ -713,6 +791,11 @@ class BattlePlanDB {
       await this.addCalibrationEntry(item.tag, item.estimate_bucket, actual_bucket);
     }
 
+    // Create next recurring instance if task is recurring
+    if (item.recurrence) {
+      await this.createNextRecurringTask(item);
+    }
+
     return this.updateItem(id, {
       status: 'done',
       actual_bucket,
@@ -721,6 +804,93 @@ class BattlePlanDB {
       top3Date: null,
       top3Locked: false
     });
+  }
+
+  async createNextRecurringTask(originalItem) {
+    const nextDate = this.getNextRecurrenceDate(originalItem);
+    const now = new Date().toISOString();
+
+    const newItem = {
+      id: this.generateId(),
+      text: originalItem.text,
+      status: 'next', // Recurring tasks go to Next by default
+      tag: originalItem.tag,
+      next_action: originalItem.next_action,
+      // Copy ACE+LMT scores
+      A: originalItem.A,
+      C: originalItem.C,
+      E: originalItem.E,
+      L: originalItem.L,
+      M: originalItem.M,
+      T: originalItem.T,
+      // Copy time planning
+      estimate_bucket: originalItem.estimate_bucket,
+      confidence: originalItem.confidence,
+      actual_bucket: null,
+      // Reset Top 3
+      isTop3: false,
+      top3Order: null,
+      top3Date: null,
+      top3Locked: false,
+      // Set next scheduled date
+      scheduled_for_date: nextDate,
+      dueDate: null,
+      // Copy recurrence settings
+      recurrence: originalItem.recurrence,
+      recurrence_day: originalItem.recurrence_day,
+      waiting_on: null,
+      // Timestamps
+      created_at: now,
+      updated_at: now
+    };
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readwrite');
+      const store = tx.objectStore('items');
+      const request = store.add(newItem);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(newItem);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  getNextRecurrenceDate(item) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let nextDate = new Date(today);
+
+    switch (item.recurrence) {
+      case 'daily':
+        nextDate.setDate(nextDate.getDate() + 1);
+        break;
+
+      case 'weekly':
+        // Find next occurrence of the specified day
+        const targetDay = item.recurrence_day || 0; // 0 = Sunday
+        let daysUntilNext = targetDay - today.getDay();
+        if (daysUntilNext <= 0) daysUntilNext += 7;
+        nextDate.setDate(nextDate.getDate() + daysUntilNext);
+        break;
+
+      case 'monthly':
+        // Next month on the same date (handle month-end edge cases)
+        const targetDate = item.recurrence_day || today.getDate();
+        // Set to 1st first to avoid overflow when changing months (e.g., Jan 31 -> Mar 3)
+        nextDate.setDate(1);
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        // Get days in the target month
+        const daysInMonth = new Date(nextDate.getFullYear(), nextDate.getMonth() + 1, 0).getDate();
+        nextDate.setDate(Math.min(targetDate, daysInMonth));
+        break;
+
+      default:
+        nextDate.setDate(nextDate.getDate() + 1);
+    }
+
+    return nextDate.toISOString().split('T')[0];
   }
 
   // ==================== PRESETS ====================
@@ -796,7 +966,10 @@ class BattlePlanDB {
       const tx = this.db.transaction('routines', 'readwrite');
       const store = tx.objectStore('routines');
       const request = store.add(routine);
-      request.onsuccess = () => resolve(routine);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(routine);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -823,7 +996,10 @@ class BattlePlanDB {
       const tx = this.db.transaction('routines', 'readwrite');
       const store = tx.objectStore('routines');
       const request = store.put(updated);
-      request.onsuccess = () => resolve(updated);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(updated);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -834,7 +1010,10 @@ class BattlePlanDB {
       const tx = this.db.transaction('routines', 'readwrite');
       const store = tx.objectStore('routines');
       const request = store.delete(id);
-      request.onsuccess = () => resolve(true);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(true);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -1062,6 +1241,52 @@ class BattlePlanDB {
     console.log(JSON.stringify(diagnostics, null, 2));
 
     return diagnostics;
+  }
+
+  // ==================== AUTO-BACKUP ====================
+
+  scheduleAutoBackup() {
+    // Debounce - wait 5 seconds after last change before backing up
+    if (this.autoBackupTimeout) {
+      clearTimeout(this.autoBackupTimeout);
+    }
+    this.autoBackupTimeout = setTimeout(() => this.performAutoBackup(), 5000);
+  }
+
+  async performAutoBackup() {
+    try {
+      const data = await this.exportData();
+      const backups = JSON.parse(localStorage.getItem('battlePlanAutoBackups') || '[]');
+
+      // Add new backup with timestamp
+      backups.unshift({
+        timestamp: new Date().toISOString(),
+        data: data
+      });
+
+      // Keep only last 3 backups
+      while (backups.length > 3) {
+        backups.pop();
+      }
+
+      localStorage.setItem('battlePlanAutoBackups', JSON.stringify(backups));
+      console.log('Auto-backup saved:', new Date().toLocaleTimeString());
+    } catch (e) {
+      console.error('Auto-backup failed:', e);
+    }
+  }
+
+  getAutoBackups() {
+    return JSON.parse(localStorage.getItem('battlePlanAutoBackups') || '[]');
+  }
+
+  async restoreFromAutoBackup(index = 0) {
+    const backups = this.getAutoBackups();
+    if (backups[index]) {
+      await this.importData(backups[index].data, true);
+      return true;
+    }
+    return false;
   }
 }
 
