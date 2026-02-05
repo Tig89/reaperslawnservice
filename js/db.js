@@ -205,6 +205,21 @@ class BattlePlanDB {
     });
   }
 
+  // Restore a previously deleted item (for undo functionality)
+  async restoreItem(item) {
+    await this.ready;
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readwrite');
+      const store = tx.objectStore('items');
+      const request = store.put(item);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(item);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async getAllItems() {
     await this.ready;
     return new Promise((resolve, reject) => {

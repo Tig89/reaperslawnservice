@@ -435,6 +435,19 @@ body {
   color: var(--text-muted);
 }
 
+.search-count {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  padding: 4px 8px;
+  background: var(--bg-card);
+  border-radius: var(--border-radius);
+}
+
+.search-count.hidden {
+  display: none;
+}
+
 .search-all-toggle {
   display: flex;
   align-items: center;
@@ -833,6 +846,12 @@ mark {
   font-size: var(--font-size-sm);
   font-weight: bold;
   color: white;
+}
+
+.top3-badge .lock-icon {
+  font-size: 10px;
+  margin-left: 2px;
+  opacity: 0.9;
 }
 
 /* ==================== ITEM ACTIONS ==================== */

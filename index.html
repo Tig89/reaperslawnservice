@@ -16,7 +16,7 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css" integrity="sha384-9WngUUt3LKszq7XOyiuEAIJ2ZEJ99YildUh63RGLS9gwScq5zXAq1g4UZnDNl83z" crossorigin="anonymous">
+  <link rel="stylesheet" href="css/styles.css" integrity="sha384-f6PahdazEYUuYQzX50QCELXFk+xsOMMHee1R0iNnsL/QDSKg3Cq9I71qdqgEwoDt" crossorigin="anonymous">
 </head>
 <body>
   <div id="app">
@@ -54,6 +54,7 @@
     <!-- Search Bar -->
     <div id="search-bar" class="search-bar">
       <input type="text" id="search-input" placeholder="Search all tasks..." maxlength="200">
+      <span id="search-count" class="search-count hidden"></span>
     </div>
 
     <!-- Navigation (scrollable) -->
@@ -324,6 +325,15 @@
               <li><strong>Swipe Right</strong> - Mark as Done</li>
               <li><strong>Swipe Left</strong> - Move to Tomorrow</li>
               <li><strong>Double Tap</strong> - Edit task</li>
+            </ul>
+
+            <h4>Keyboard Shortcuts</h4>
+            <ul class="help-list">
+              <li><strong>T/W/N/S/D</strong> - Move selected task to Today/tomorroW/Next/Someday/Done</li>
+              <li><strong>E</strong> - Edit selected task</li>
+              <li><strong>Delete/Backspace</strong> - Delete selected task (with undo)</li>
+              <li><strong>Escape</strong> - Close any open modal</li>
+              <li><strong>Enter</strong> - Confirm in modals/add task in inbox</li>
             </ul>
           </div>
         </div>
@@ -621,8 +631,8 @@
     </div>
   </div>
 
-  <script src="js/db.js" integrity="sha384-YGEpaj5E/gW0CgBO1Cg0Y2BPhDojvXbc0tmoB09nwOkb9G/6yUCzm5OUnGpSkbhP" crossorigin="anonymous"></script>
-  <script src="js/app.js" integrity="sha384-OD7pW2uKJzR9SP2Z4bocyp3wYLCOkdRI9A7ji1rFKD9N7JpSz4/Trf3G/BhS2ss9" crossorigin="anonymous"></script>
+  <script src="js/db.js" integrity="sha384-oZg2mXsn0Psz/T/n5GgLWBtW0KDr59WdqMi3K11LTNVUn1RuIRj3EGukMmxH2KCS" crossorigin="anonymous"></script>
+  <script src="js/app.js" integrity="sha384-tG8sQtP9vCXQs0O+mKa9U4z43/RMvB8mo2lzHTtPZ9jHuZqaJ4WCB6KOps8oNPBv" crossorigin="anonymous"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
