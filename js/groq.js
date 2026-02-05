@@ -7,11 +7,23 @@
 const GROQ_MODEL = 'llama-3.1-8b-instant';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_STORAGE_KEY = 'battlePlanGroqApiKey';
+const GROQ_ENABLED_KEY = 'battlePlanGroqEnabled';
 
 class GroqAssistant {
   constructor() {
-    this.enabled = true;
     this.apiKey = localStorage.getItem(GROQ_STORAGE_KEY) || '';
+    // Default to enabled if not explicitly set
+    const storedEnabled = localStorage.getItem(GROQ_ENABLED_KEY);
+    this.enabled = storedEnabled === null ? true : storedEnabled === 'true';
+  }
+
+  setEnabled(enabled) {
+    this.enabled = enabled;
+    localStorage.setItem(GROQ_ENABLED_KEY, enabled.toString());
+  }
+
+  isEnabled() {
+    return this.enabled;
   }
 
   setApiKey(key) {
@@ -25,6 +37,11 @@ class GroqAssistant {
 
   hasApiKey() {
     return this.apiKey && this.apiKey.startsWith('gsk_');
+  }
+
+  // Returns true if AI should be used (enabled + has key)
+  shouldUseAI() {
+    return this.enabled && this.hasApiKey();
   }
 
   /**
@@ -76,9 +93,10 @@ Current context:
 Respond ONLY with valid JSON, no explanation. Example:
 {"intent": "add_task", "data": {"text": "Buy groceries", "scheduled_date": "${today}", "due_date": null, "estimate_minutes": 30}}`;
 
-    // Check for API key
-    if (!this.hasApiKey()) {
-      return { intent: 'unknown', data: {}, error: 'No API key configured. Add your Groq API key in Settings.' };
+    // Check if AI is enabled and configured
+    if (!this.shouldUseAI()) {
+      // Return special intent to signal fallback to simple mode
+      return { intent: 'disabled', data: { text: userInput }, error: this.enabled ? 'No API key configured' : 'AI disabled' };
     }
 
     try {

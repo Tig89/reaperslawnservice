@@ -220,19 +220,35 @@ class BattlePlanApp {
   // ==================== GROQ AI SETTINGS ====================
 
   loadGroqSettings() {
+    const enabledCheckbox = document.getElementById('setting-groq-enabled');
     const keyInput = document.getElementById('setting-groq-api-key');
     const statusSpan = document.getElementById('groq-key-status');
+
+    // Load enabled state
+    enabledCheckbox.checked = groqAssistant.isEnabled();
 
     if (groqAssistant.hasApiKey()) {
       // Show masked key
       keyInput.value = '••••••••••••••••';
       keyInput.placeholder = 'Key saved (click to change)';
-      statusSpan.textContent = '✓ Configured';
-      statusSpan.style.color = 'var(--success)';
+      statusSpan.textContent = groqAssistant.isEnabled() ? '✓ Configured' : '(Disabled)';
+      statusSpan.style.color = groqAssistant.isEnabled() ? 'var(--success)' : 'var(--text-muted)';
     } else {
       keyInput.value = '';
       statusSpan.textContent = '';
     }
+  }
+
+  setGroqEnabled(enabled) {
+    groqAssistant.setEnabled(enabled);
+    const statusSpan = document.getElementById('groq-key-status');
+
+    if (groqAssistant.hasApiKey()) {
+      statusSpan.textContent = enabled ? '✓ Configured' : '(Disabled)';
+      statusSpan.style.color = enabled ? 'var(--success)' : 'var(--text-muted)';
+    }
+
+    this.showToast(enabled ? 'AI Assistant enabled' : 'AI Assistant disabled');
   }
 
   saveGroqApiKey() {
@@ -390,7 +406,10 @@ class BattlePlanApp {
       this.requestNotificationPermission();
     });
 
-    // Groq API Key settings
+    // Groq AI settings
+    document.getElementById('setting-groq-enabled').addEventListener('change', (e) => {
+      this.setGroqEnabled(e.target.checked);
+    });
     document.getElementById('save-groq-key-btn').addEventListener('click', () => this.saveGroqApiKey());
     document.getElementById('test-groq-key-btn').addEventListener('click', () => this.testGroqApiKey());
     document.getElementById('setting-groq-api-key').addEventListener('keydown', (e) => {
@@ -1646,6 +1665,11 @@ class BattlePlanApp {
         this.showToast('Try: "add task...", "go to today", "how many tasks today?"');
         break;
 
+      case 'disabled':
+        // AI is disabled - add text directly as a task
+        await this.voiceAddTaskSimple(originalText);
+        break;
+
       case 'unknown':
       default:
         // Fall back to inserting as task text or into input
@@ -1686,6 +1710,19 @@ class BattlePlanApp {
     let msg = `Added: ${data.text.substring(0, 25)}`;
     if (data.scheduled_date) msg += ` (${data.scheduled_date === db.getToday() ? 'today' : data.scheduled_date})`;
     this.showToast(msg);
+  }
+
+  async voiceAddTaskSimple(text) {
+    // Simple mode - just add text directly as a task (no AI parsing)
+    if (!text || !text.trim()) {
+      this.showToast('No text detected');
+      return;
+    }
+
+    await db.addItem(text.trim());
+    await this.render();
+    await this.updateHUD();
+    this.showToast(`Added: ${text.substring(0, 30)}...`);
   }
 
   async voiceCompleteTask(keyword) {
