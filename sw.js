@@ -3,7 +3,7 @@
  * Network-first strategy: always fetch fresh when online, cache for offline
  */
 
-const CACHE_NAME = 'battle-plan-v3';
+const CACHE_NAME = 'battle-plan-v4';
 const BASE_PATH = '/reaperslawnservice';
 const ASSETS_TO_CACHE = [
   `${BASE_PATH}/`,
@@ -12,6 +12,7 @@ const ASSETS_TO_CACHE = [
   `${BASE_PATH}/css/styles.css`,
   `${BASE_PATH}/js/db.js`,
   `${BASE_PATH}/js/app.js`,
+  `${BASE_PATH}/js/voice-assistant.js`,
   `${BASE_PATH}/icons/icon.svg`
 ];
 

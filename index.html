@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <!-- Security headers -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self' https://api.groq.com;">
   <meta http-equiv="X-Frame-Options" content="DENY">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -16,7 +16,7 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css" integrity="sha384-+aNOlum9rxHwBZDULwoCVc84W2JgMCfGSb3kkAkN54CC9MvUQf8EqNCWu+W+ryzD" crossorigin="anonymous">
+  <link rel="stylesheet" href="css/styles.css" integrity="sha384-nHYfdQKWk7Am7UQHWPQJOj728QOead4/pUyms5m5wraRrc55XkHWVkzKk3cb9n67" crossorigin="anonymous">
 </head>
 <body>
   <div id="app">
@@ -645,7 +645,8 @@
   </div>
 
   <script src="js/db.js" integrity="sha384-wfVDUVcaijMM+MUu4mIJWEB+47THQNhFiylPJdL8hIcNIH3XjkU9y/hyKczwEjbM" crossorigin="anonymous"></script>
-  <script src="js/app.js" integrity="sha384-32TMr8pgjvnhgwcT1+30nwxPW5cQC/Y5ANE+JYp6/RiGbOu0sTCJgxLfb4v2NMrC" crossorigin="anonymous"></script>
+  <script src="js/app.js" integrity="sha384-yR0plTFn7voLv/Sh2a/1m2TrwGyQ00fqP7c3PMycAeKME/6mCCEms3meSgm3xU43" crossorigin="anonymous"></script>
+  <script src="js/voice-assistant.js" integrity="sha384-PZR6f7s6RMOGw+tE5kAZEvhRT9IpQ89Z6HmEiTq/RgiaiXy3Jnz4+Q3OpMIg2wJB" crossorigin="anonymous"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
