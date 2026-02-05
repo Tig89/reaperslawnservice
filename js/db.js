@@ -1154,9 +1154,19 @@ class BattlePlanDB {
     'id', 'name', 'items', 'created_at', 'updated_at'
   ]);
 
+  static ALLOWED_CALIBRATION_FIELDS = new Set([
+    'id', 'tag', 'estimate_bucket', 'actual_bucket', 'completed_at'
+  ]);
+
+  static ALLOWED_SETTINGS_KEYS = new Set([
+    'timerDefault', 'weekday_capacity_minutes', 'weekend_capacity_minutes',
+    'always_plan_slack_percent', 'auto_roll_tomorrow_to_today', 'top3_auto_clear_daily'
+  ]);
+
   static VALID_STATUSES = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'];
   static VALID_CONFIDENCES = ['high', 'medium', 'low', null];
   static VALID_RECURRENCES = ['', 'daily', 'weekly', 'monthly', null];
+  static VALID_TAGS = ['Home', 'Army', 'Business', 'Other'];
 
   /**
    * Safely copy only whitelisted fields from an object (prevents prototype pollution)
@@ -1178,6 +1188,49 @@ class BattlePlanDB {
         sanitized[key] = routine[key];
       }
     }
+    return sanitized;
+  }
+
+  /**
+   * Sanitize and validate calibration history entry
+   */
+  sanitizeCalibrationEntry(entry) {
+    const sanitized = {};
+    for (const key of Object.keys(entry)) {
+      if (BattlePlanDB.ALLOWED_CALIBRATION_FIELDS.has(key)) {
+        sanitized[key] = entry[key];
+      }
+    }
+
+    // Validate required fields
+    if (!sanitized.id || typeof sanitized.id !== 'string') {
+      sanitized.id = this.generateId();
+    }
+
+    // Validate estimate_bucket (must be positive number)
+    const estimate = parseInt(sanitized.estimate_bucket);
+    if (isNaN(estimate) || estimate <= 0) {
+      return null; // Invalid entry, skip it
+    }
+    sanitized.estimate_bucket = estimate;
+
+    // Validate actual_bucket (must be positive number)
+    const actual = parseInt(sanitized.actual_bucket);
+    if (isNaN(actual) || actual <= 0) {
+      return null; // Invalid entry, skip it
+    }
+    sanitized.actual_bucket = actual;
+
+    // Validate tag (must be valid tag or default to 'Other')
+    if (!sanitized.tag || !BattlePlanDB.VALID_TAGS.includes(sanitized.tag)) {
+      sanitized.tag = 'Other';
+    }
+
+    // Validate completed_at (must be valid ISO date string)
+    if (!sanitized.completed_at || isNaN(Date.parse(sanitized.completed_at))) {
+      sanitized.completed_at = new Date().toISOString();
+    }
+
     return sanitized;
   }
 
@@ -1329,19 +1382,26 @@ class BattlePlanDB {
       });
     }
 
-    // Import settings
+    // Import settings with whitelist validation
     if (data.settings) {
       for (const [key, value] of Object.entries(data.settings)) {
-        await this.setSetting(key, value);
+        // Only import whitelisted settings keys
+        if (BattlePlanDB.ALLOWED_SETTINGS_KEYS.has(key)) {
+          await this.setSetting(key, value);
+        }
       }
     }
 
-    // Import calibration history
+    // Import calibration history with validation
     for (const entry of (data.calibrationHistory || [])) {
+      // Sanitize and validate entry
+      const sanitized = this.sanitizeCalibrationEntry(entry);
+      if (!sanitized) continue; // Skip invalid entries
+
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('calibration_history', 'readwrite');
         const store = tx.objectStore('calibration_history');
-        const request = store.add(entry);
+        const request = store.add(sanitized);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
       });
@@ -1418,8 +1478,9 @@ class BattlePlanDB {
 
   async performAutoBackup() {
     try {
+      await this.ready;
       const data = await this.exportData();
-      const backups = JSON.parse(localStorage.getItem('battlePlanAutoBackups') || '[]');
+      const backups = await this.getAutoBackups();
 
       // Add new backup with timestamp
       backups.unshift({
@@ -1432,7 +1493,8 @@ class BattlePlanDB {
         backups.pop();
       }
 
-      localStorage.setItem('battlePlanAutoBackups', JSON.stringify(backups));
+      // Store in IndexedDB settings (more secure than localStorage)
+      await this.setSetting('_autoBackups', backups);
       // Auto-backup completed silently
     } catch (e) {
       // Log only generic error without exposing data
@@ -1440,12 +1502,27 @@ class BattlePlanDB {
     }
   }
 
-  getAutoBackups() {
-    return JSON.parse(localStorage.getItem('battlePlanAutoBackups') || '[]');
+  async getAutoBackups() {
+    await this.ready;
+    // Try IndexedDB first (new secure location)
+    const idbBackups = await this.getSetting('_autoBackups', null);
+    if (idbBackups) {
+      return idbBackups;
+    }
+    // Fall back to localStorage for migration (one-time)
+    const lsBackups = localStorage.getItem('battlePlanAutoBackups');
+    if (lsBackups) {
+      const parsed = JSON.parse(lsBackups);
+      // Migrate to IndexedDB and clear localStorage
+      await this.setSetting('_autoBackups', parsed);
+      localStorage.removeItem('battlePlanAutoBackups');
+      return parsed;
+    }
+    return [];
   }
 
   async restoreFromAutoBackup(index = 0) {
-    const backups = this.getAutoBackups();
+    const backups = await this.getAutoBackups();
     if (backups[index]) {
       await this.importData(backups[index].data, true);
       return true;
