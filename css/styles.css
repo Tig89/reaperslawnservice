@@ -72,13 +72,13 @@
 [data-theme="matrix"] {
   --bg-primary: #000000;
   --bg-secondary: #0a1a0a;
-  --bg-card: #102010;
+  --bg-card: #0f1f0f;
   --accent: #00ff41;
   --accent-hover: #33ff66;
   --accent-secondary: #00cc33;
-  --text-primary: #e0ffe0;
-  --text-secondary: #80ff80;
-  --text-muted: #40aa40;
+  --text-primary: #ffffff;
+  --text-secondary: #c0ffc0;
+  --text-muted: #70cc70;
   --success: #00ff41;
   --warning: #ffff00;
   --danger: #ff3366;
@@ -206,8 +206,44 @@
 
 [data-theme="matrix"] .settings-section,
 [data-theme="matrix"] .analytics-card {
-  background: #102010;
-  border: 1px solid #00ff4122;
+  background: #0f1f0f;
+  border: 1px solid #00ff4133;
+}
+
+/* Matrix theme - settings page specific */
+[data-theme="matrix"] .settings-section p,
+[data-theme="matrix"] .setting-hint {
+  color: #90dd90;
+}
+
+[data-theme="matrix"] .setting-row label {
+  color: #ffffff;
+}
+
+[data-theme="matrix"] .theme-btn {
+  color: #c0ffc0;
+}
+
+[data-theme="matrix"] .theme-btn.active {
+  background: #00ff41;
+  color: #000000;
+}
+
+[data-theme="matrix"] .nav-btn {
+  color: #90dd90;
+}
+
+[data-theme="matrix"] .nav-btn:hover {
+  color: #ffffff;
+}
+
+[data-theme="matrix"] .search-bar input {
+  background: #0a150a;
+  color: #ffffff;
+}
+
+[data-theme="matrix"] .search-bar input::placeholder {
+  color: #60aa60;
 }
 
 /* System preference auto theme */
