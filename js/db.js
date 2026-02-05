@@ -136,6 +136,10 @@ class BattlePlanDB {
       recurrence_day: null, // 0-6 for weekly (0=Sunday), 1-31 for monthly
       // Waiting
       waiting_on: null,
+      // Notes
+      notes: null,
+      // Sub-tasks
+      parent_id: null, // ID of parent task, null if top-level
       // Timestamps
       created_at: now,
       updated_at: now
@@ -210,6 +214,64 @@ class BattlePlanDB {
       request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
+  }
+
+  // ==================== SUB-TASKS ====================
+
+  async getSubtasks(parentId) {
+    const allItems = await this.getAllItems();
+    return allItems.filter(item => item.parent_id === parentId);
+  }
+
+  async addSubtask(parentId, text) {
+    await this.ready;
+    const parent = await this.getItem(parentId);
+    if (!parent) return null;
+
+    const now = new Date().toISOString();
+    const subtask = {
+      id: this.generateId(),
+      text: text.trim(),
+      status: parent.status, // Inherit parent's status
+      tag: parent.tag, // Inherit parent's tag
+      next_action: null,
+      A: null, C: null, E: null,
+      L: null, M: null, T: null,
+      estimate_bucket: null,
+      confidence: null,
+      actual_bucket: null,
+      isTop3: false,
+      top3Order: null,
+      top3Date: null,
+      top3Locked: false,
+      scheduled_for_date: parent.scheduled_for_date,
+      dueDate: parent.dueDate, // Inherit due date
+      recurrence: null,
+      recurrence_day: null,
+      waiting_on: null,
+      notes: null,
+      parent_id: parentId,
+      created_at: now,
+      updated_at: now
+    };
+
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readwrite');
+      const store = tx.objectStore('items');
+      const request = store.add(subtask);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(subtask);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getSubtaskProgress(parentId) {
+    const subtasks = await this.getSubtasks(parentId);
+    if (subtasks.length === 0) return null;
+    const completed = subtasks.filter(t => t.status === 'done').length;
+    return { completed, total: subtasks.length };
   }
 
   // ==================== FULLY RATED PREDICATE ====================
@@ -363,6 +425,8 @@ class BattlePlanDB {
     const today = this.getToday();
 
     return items.filter(i => {
+      // Exclude subtasks from main lists
+      if (i.parent_id) return false;
       if (i.status === 'done') return false;
 
       // Explicit today status
@@ -600,13 +664,13 @@ class BattlePlanDB {
     const items = await this.getAllItems();
     const tomorrow = this.getTomorrow();
     return items.filter(i =>
-      i.status !== 'done' && i.scheduled_for_date === tomorrow
+      !i.parent_id && i.status !== 'done' && i.scheduled_for_date === tomorrow
     );
   }
 
   async getItemsByStatus(status) {
     const items = await this.getAllItems();
-    return items.filter(i => i.status === status);
+    return items.filter(i => !i.parent_id && i.status === status);
   }
 
   // ==================== STATS ====================
@@ -812,10 +876,14 @@ class BattlePlanDB {
         break;
 
       case 'monthly':
-        // Next month on the same date
-        const targetDate = item.recurrence_day || 1;
+        // Next month on the same date (handle month-end edge cases)
+        const targetDate = item.recurrence_day || today.getDate();
+        // Set to 1st first to avoid overflow when changing months (e.g., Jan 31 -> Mar 3)
+        nextDate.setDate(1);
         nextDate.setMonth(nextDate.getMonth() + 1);
-        nextDate.setDate(Math.min(targetDate, new Date(nextDate.getFullYear(), nextDate.getMonth() + 1, 0).getDate()));
+        // Get days in the target month
+        const daysInMonth = new Date(nextDate.getFullYear(), nextDate.getMonth() + 1, 0).getDate();
+        nextDate.setDate(Math.min(targetDate, daysInMonth));
         break;
 
       default:

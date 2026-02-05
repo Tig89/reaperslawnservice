@@ -14,6 +14,7 @@ class BattlePlanApp {
     this.focusPaused = false;
     this.timerDefault = 25;
     this.searchQuery = '';
+    this.searchTimeout = null;
 
     // Edit modal state
     this.editState = {
@@ -30,9 +31,14 @@ class BattlePlanApp {
     // Pending import data for confirmation
     this.pendingImportData = null;
 
+    // Pending waiting item
+    this.pendingWaitingId = null;
+
     // Swipe gesture state
     this.swipeState = null;
     this.swipeEnabled = true;
+    this.swipeThreshold = 0.45; // 45% default, configurable
+    this.trayCloseHandler = null; // Track close handler to prevent memory leaks
 
     // Voice input state
     this.speechRecognition = null;
@@ -42,6 +48,7 @@ class BattlePlanApp {
     // Undo state
     this.lastAction = null; // { type, itemId, previousState, description }
     this.undoTimeout = null;
+    this.undoCountdownInterval = null;
 
     // Notification state
     this.notificationsEnabled = localStorage.getItem('battlePlanNotifications') === 'true';
@@ -59,15 +66,19 @@ class BattlePlanApp {
     // Load settings
     this.timerDefault = await db.getSetting('timerDefault', 25);
     this.swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
+    this.swipeThreshold = await db.getSetting('swipe_threshold', 0.45);
 
     // Initialize voice input if supported
     this.initVoiceInput();
 
     this.bindEvents();
 
+    // Load theme preference
+    this.loadTheme();
+
     // Handle initial page from URL hash (for back button support)
     const hash = window.location.hash.slice(1);
-    const validPages = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'settings'];
+    const validPages = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'analytics', 'settings'];
     if (hash && validPages.includes(hash)) {
       this.navigateTo(hash, false);
     }
@@ -82,6 +93,76 @@ class BattlePlanApp {
 
     // Check periodically (every hour)
     setInterval(() => this.checkDueNotifications(), 60 * 60 * 1000);
+
+    // Offline/online detection
+    this.updateOfflineIndicator();
+    window.addEventListener('online', () => this.updateOfflineIndicator());
+    window.addEventListener('offline', () => this.updateOfflineIndicator());
+
+    // Check storage quota
+    this.checkStorageQuota();
+  }
+
+  async checkStorageQuota() {
+    if (!navigator.storage || !navigator.storage.estimate) {
+      document.getElementById('storage-usage').textContent = 'N/A';
+      return;
+    }
+
+    try {
+      const estimate = await navigator.storage.estimate();
+      const usage = estimate.usage || 0;
+      const quota = estimate.quota || 0;
+
+      if (quota > 0) {
+        const percentUsed = (usage / quota) * 100;
+        const usageMB = (usage / (1024 * 1024)).toFixed(1);
+        const quotaMB = (quota / (1024 * 1024)).toFixed(0);
+
+        const storageEl = document.getElementById('storage-usage');
+        storageEl.textContent = `${usageMB}MB / ${quotaMB}MB (${Math.round(percentUsed)}%)`;
+
+        if (percentUsed >= 80) {
+          storageEl.classList.add('storage-warning');
+          this.showToast(`Storage ${Math.round(percentUsed)}% full. Consider exporting data.`, 'warning');
+        }
+      }
+    } catch (e) {
+      console.warn('Could not check storage quota:', e);
+      document.getElementById('storage-usage').textContent = 'N/A';
+    }
+  }
+
+  updateOfflineIndicator() {
+    const indicator = document.getElementById('offline-indicator');
+    if (navigator.onLine) {
+      indicator.classList.add('hidden');
+    } else {
+      indicator.classList.remove('hidden');
+    }
+  }
+
+  // ==================== THEME ====================
+
+  setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('battlePlanTheme', theme);
+
+    // Update button states
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    document.getElementById(`theme-${theme}`).classList.add('active');
+  }
+
+  loadTheme() {
+    const savedTheme = localStorage.getItem('battlePlanTheme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+
+    // Update button states
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.id === `theme-${savedTheme}`);
+    });
   }
 
   // ==================== EVENT BINDING ====================
@@ -95,10 +176,12 @@ class BattlePlanApp {
     // Handle browser back/forward buttons (Android back button support)
     window.addEventListener('popstate', (e) => this.handlePopState(e));
 
-    // Search
+    // Search (debounced for performance)
     document.getElementById('search-input').addEventListener('input', (e) => {
       this.searchQuery = e.target.value;
-      this.render();
+      // Debounce: wait 300ms after typing stops before rendering
+      if (this.searchTimeout) clearTimeout(this.searchTimeout);
+      this.searchTimeout = setTimeout(() => this.render(), 300);
     });
 
     // Inbox
@@ -148,6 +231,15 @@ class BattlePlanApp {
       this.swipeEnabled = e.target.checked;
       db.setSetting('enable_swipe_gestures', e.target.checked);
     });
+    document.getElementById('setting-swipe-threshold').addEventListener('change', (e) => {
+      this.swipeThreshold = parseFloat(e.target.value);
+      db.setSetting('swipe_threshold', this.swipeThreshold);
+    });
+
+    // Theme toggle
+    document.getElementById('theme-dark').addEventListener('click', () => this.setTheme('dark'));
+    document.getElementById('theme-light').addEventListener('click', () => this.setTheme('light'));
+    document.getElementById('theme-system').addEventListener('click', () => this.setTheme('system'));
 
     // Notification settings
     document.getElementById('setting-notifications').addEventListener('change', (e) => {
@@ -175,6 +267,12 @@ class BattlePlanApp {
     document.getElementById('edit-save-btn').addEventListener('click', () => this.saveEditItem());
     document.getElementById('edit-delete-btn').addEventListener('click', () => this.deleteEditItem());
     document.getElementById('edit-cancel-btn').addEventListener('click', () => this.closeEditModal());
+
+    // Edit Modal - Subtasks
+    document.getElementById('add-subtask-btn').addEventListener('click', () => this.addSubtask());
+    document.getElementById('subtask-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.addSubtask();
+    });
 
     // Edit Modal - Tag buttons
     document.querySelectorAll('.tag-btn').forEach(btn => {
@@ -230,6 +328,14 @@ class BattlePlanApp {
     document.getElementById('import-confirm-btn').addEventListener('click', () => this.confirmImport());
     document.getElementById('import-cancel-btn').addEventListener('click', () => this.cancelImport());
 
+    // Waiting Modal
+    document.getElementById('waiting-confirm-btn').addEventListener('click', () => this.confirmWaiting());
+    document.getElementById('waiting-cancel-btn').addEventListener('click', () => this.cancelWaiting());
+    document.getElementById('waiting-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.confirmWaiting();
+      if (e.key === 'Escape') this.cancelWaiting();
+    });
+
     // Focus Mode
     document.getElementById('focus-pause-btn').addEventListener('click', () => this.toggleFocusPause());
     document.getElementById('focus-stop-btn').addEventListener('click', () => this.stopFocus());
@@ -263,9 +369,11 @@ class BattlePlanApp {
     // Behavior settings
     const top3Clear = await db.getSetting('top3_auto_clear_daily', true);
     const swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
+    const swipeThreshold = await db.getSetting('swipe_threshold', 0.45);
 
     document.getElementById('setting-top3-clear').checked = top3Clear;
     document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
+    document.getElementById('setting-swipe-threshold').value = swipeThreshold.toString();
 
     // Load notification setting
     document.getElementById('setting-notifications').checked = this.notificationsEnabled;
@@ -275,6 +383,11 @@ class BattlePlanApp {
   // ==================== NAVIGATION ====================
 
   navigateTo(page, pushHistory = true) {
+    // Clean up focus timer if leaving Today page
+    if (this.currentPage === 'today' && page !== 'today' && this.focusTimer) {
+      this.stopFocus();
+    }
+
     this.currentPage = page;
     this.selectedItemId = null;
 
@@ -431,6 +544,9 @@ class BattlePlanApp {
       case 'routines':
         await this.renderRoutines();
         break;
+      case 'analytics':
+        await this.renderAnalytics();
+        break;
     }
   }
 
@@ -485,10 +601,18 @@ class BattlePlanApp {
     if (top3Items.length === 0) {
       top3List.innerHTML = '<li class="empty-state"><p>Tap "Suggest Top 3" to auto-select priorities</p></li>';
     } else {
-      const top3Html = await Promise.all(top3Items.map(async (item, index) =>
-        await this.renderItemAsync(item, { isTop3: true, top3Number: index + 1 })
-      ));
-      top3List.innerHTML = top3Html.join('');
+      try {
+        const top3Results = await Promise.allSettled(top3Items.map(async (item, index) =>
+          await this.renderItemAsync(item, { isTop3: true, top3Number: index + 1 })
+        ));
+        const top3Html = top3Results
+          .filter(r => r.status === 'fulfilled')
+          .map(r => r.value);
+        top3List.innerHTML = top3Html.join('');
+      } catch (e) {
+        console.error('Error rendering Top 3:', e);
+        top3List.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
+      }
     }
 
     // Other today items
@@ -497,10 +621,18 @@ class BattlePlanApp {
       const msg = this.searchQuery ? 'No matching items' : 'Mark items as Today in Inbox';
       todayList.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
     } else {
-      const otherHtml = await Promise.all(otherItems.map(async item =>
-        await this.renderItemAsync(item, { showTop3Toggle: true })
-      ));
-      todayList.innerHTML = otherHtml.join('');
+      try {
+        const otherResults = await Promise.allSettled(otherItems.map(async item =>
+          await this.renderItemAsync(item, { showTop3Toggle: true })
+        ));
+        const otherHtml = otherResults
+          .filter(r => r.status === 'fulfilled')
+          .map(r => r.value);
+        todayList.innerHTML = otherHtml.join('');
+      } catch (e) {
+        console.error('Error rendering today items:', e);
+        todayList.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
+      }
     }
 
     this.bindItemEvents();
@@ -559,7 +691,7 @@ class BattlePlanApp {
   }
 
   renderItem(item, options = {}) {
-    const { showPills = false, isTop3 = false, top3Number = null, showTop3Toggle = false } = options;
+    const { showPills = false, isTop3 = false, top3Number = null, showTop3Toggle = false, subtaskProgress = null } = options;
 
     const statusClass = `status-${item.status}`;
     const selectedClass = item.id === this.selectedItemId ? 'selected' : '';
@@ -606,6 +738,15 @@ class BattlePlanApp {
     if (item.recurrence) {
       const recurrenceLabel = item.recurrence === 'daily' ? 'Daily' : item.recurrence === 'weekly' ? 'Weekly' : 'Monthly';
       metaHtml += `<span class="recurring-badge">${recurrenceLabel}</span>`;
+    }
+
+    if (item.notes) {
+      metaHtml += `<span class="notes-badge">Notes</span>`;
+    }
+
+    if (subtaskProgress) {
+      const isComplete = subtaskProgress.completed === subtaskProgress.total;
+      metaHtml += `<span class="subtask-progress ${isComplete ? 'complete' : ''}">${subtaskProgress.completed}/${subtaskProgress.total}</span>`;
     }
 
     if (dateStr) {
@@ -700,7 +841,13 @@ class BattlePlanApp {
   }
 
   async renderItemAsync(item, options = {}) {
-    // Same as renderItem but can add async features like buffered time
+    // Fetch subtask progress if this item might have subtasks
+    if (!item.parent_id) {
+      const progress = await db.getSubtaskProgress(item.id);
+      if (progress) {
+        options.subtaskProgress = progress;
+      }
+    }
     return this.renderItem(item, options);
   }
 
@@ -867,7 +1014,7 @@ class BattlePlanApp {
       leftTray.classList.remove('visible');
 
       // Visual feedback for full swipe threshold
-      if (swipePercent >= 0.6) {
+      if (swipePercent >= this.swipeThreshold) {
         item.classList.add('swipe-threshold');
       } else {
         item.classList.remove('swipe-threshold');
@@ -877,7 +1024,7 @@ class BattlePlanApp {
       leftTray.classList.add('visible');
       rightTray.classList.remove('visible');
 
-      if (swipePercent >= 0.6) {
+      if (swipePercent >= this.swipeThreshold) {
         item.classList.add('swipe-threshold');
       } else {
         item.classList.remove('swipe-threshold');
@@ -901,7 +1048,7 @@ class BattlePlanApp {
     item.classList.remove('swipe-threshold');
 
     // Full swipe (>= 60%) - execute action immediately
-    if (swipePercent >= 0.6) {
+    if (swipePercent >= this.swipeThreshold) {
       const itemId = wrapper.dataset.id;
 
       // Haptic feedback if available
@@ -983,14 +1130,23 @@ class BattlePlanApp {
   }
 
   addTrayCloseListener(wrapper) {
+    // Remove old handler first to prevent memory leaks
+    if (this.trayCloseHandler) {
+      document.removeEventListener('click', this.trayCloseHandler);
+      document.removeEventListener('touchstart', this.trayCloseHandler);
+    }
+
     const closeHandler = (e) => {
       // Check if click is outside the wrapper
       if (!wrapper.contains(e.target)) {
         this.resetSwipe(wrapper);
         document.removeEventListener('click', closeHandler);
         document.removeEventListener('touchstart', closeHandler);
+        this.trayCloseHandler = null;
       }
     };
+
+    this.trayCloseHandler = closeHandler;
 
     // Delay adding listener to avoid immediate trigger
     setTimeout(() => {
@@ -1068,11 +1224,16 @@ class BattlePlanApp {
       return;
     }
 
-    if (this.isListening) {
-      this.stopVoiceInput();
+    // Prevent race condition from rapid clicks
+    if (this.isListening || this.voiceStartLock) {
+      if (this.isListening) {
+        this.stopVoiceInput();
+      }
       return;
     }
 
+    // Lock to prevent double-start
+    this.voiceStartLock = true;
     this.isListening = true;
     this.currentVoiceTarget = targetInputId;
 
@@ -1091,6 +1252,9 @@ class BattlePlanApp {
       console.error('Failed to start speech recognition:', err);
       this.stopVoiceInput();
       this.showToast('Failed to start voice input');
+    } finally {
+      // Release lock after a short delay
+      setTimeout(() => { this.voiceStartLock = false; }, 300);
     }
   }
 
@@ -1243,6 +1407,11 @@ class BattlePlanApp {
     if (toast) {
       toast.classList.remove('visible');
     }
+    // Clear countdown interval if active
+    if (this.undoCountdownInterval) {
+      clearInterval(this.undoCountdownInterval);
+      this.undoCountdownInterval = null;
+    }
   }
 
   // ==================== UNDO ====================
@@ -1267,17 +1436,29 @@ class BattlePlanApp {
       document.body.appendChild(toast);
     }
 
+    let countdown = 5;
     toast.innerHTML = `
       <span>${message}</span>
-      <button class="undo-btn" onclick="app.undo()">Undo</button>
+      <button class="undo-btn" onclick="app.undo()">Undo (${countdown}s)</button>
     `;
     toast.className = 'toast toast-undo visible';
 
-    // Clear previous timeout
+    // Clear previous timeout and interval
     if (this.undoTimeout) clearTimeout(this.undoTimeout);
+    if (this.undoCountdownInterval) clearInterval(this.undoCountdownInterval);
 
-    // Auto-hide after 5 seconds (longer than normal to give time to undo)
+    // Update countdown every second
+    this.undoCountdownInterval = setInterval(() => {
+      countdown--;
+      const btn = toast.querySelector('.undo-btn');
+      if (btn && countdown > 0) {
+        btn.textContent = `Undo (${countdown}s)`;
+      }
+    }, 1000);
+
+    // Auto-hide after 5 seconds
     this.undoTimeout = setTimeout(() => {
+      if (this.undoCountdownInterval) clearInterval(this.undoCountdownInterval);
       this.hideToast();
       this.lastAction = null;
     }, 5000);
@@ -1440,18 +1621,13 @@ class BattlePlanApp {
       await db.setToday(id);
       actionDescription = 'Moved to Today';
     } else if (status === 'waiting') {
-      // Prompt for what they're waiting on
-      const waitingOn = prompt('What are you waiting on?', item.waiting_on || '');
-      if (waitingOn === null) return; // cancelled
-      const updates = {
-        status: 'waiting',
-        waiting_on: waitingOn.trim() || null,
-        scheduled_for_date: null,
-        isTop3: false,
-        top3Order: null
-      };
-      await db.updateItem(id, updates);
-      actionDescription = 'Moved to Waiting';
+      // Open modal for what they're waiting on
+      this.pendingWaitingId = id;
+      const input = document.getElementById('waiting-input');
+      input.value = item.waiting_on || '';
+      document.getElementById('waiting-modal').classList.remove('hidden');
+      input.focus();
+      return; // Modal will handle the rest
     } else if (item.status === status) {
       // Toggle off - return to inbox
       await db.updateItem(id, {
@@ -1613,6 +1789,13 @@ class BattlePlanApp {
   // ==================== KEYBOARD SHORTCUTS ====================
 
   handleGlobalKeydown(e) {
+    // Handle modal focus trap first
+    const openModal = document.querySelector('.overlay:not(.hidden)');
+    if (openModal) {
+      this.handleModalKeydown(e, openModal);
+      return;
+    }
+
     // Don't handle shortcuts when typing in inputs
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
       return;
@@ -1656,6 +1839,41 @@ class BattlePlanApp {
     }
   }
 
+  handleModalKeydown(e, modal) {
+    // Close on Escape
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      modal.classList.add('hidden');
+      // Reset modal states
+      if (modal.id === 'edit-modal') this.editingItemId = null;
+      if (modal.id === 'waiting-modal') this.pendingWaitingId = null;
+      return;
+    }
+
+    // Focus trap on Tab
+    if (e.key === 'Tab') {
+      const focusableElements = modal.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+
+      if (focusableElements.length === 0) return;
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      // Shift+Tab from first element -> go to last
+      if (e.shiftKey && document.activeElement === firstElement) {
+        e.preventDefault();
+        lastElement.focus();
+      }
+      // Tab from last element -> go to first
+      else if (!e.shiftKey && document.activeElement === lastElement) {
+        e.preventDefault();
+        firstElement.focus();
+      }
+    }
+  }
+
   // ==================== EDIT MODAL ====================
 
   async openEditModal(id) {
@@ -1665,6 +1883,7 @@ class BattlePlanApp {
     // Set basic fields
     document.getElementById('edit-text').value = item.text;
     document.getElementById('edit-next-action').value = item.next_action || '';
+    document.getElementById('edit-notes').value = item.notes || '';
     document.getElementById('edit-scheduled').value = item.scheduled_for_date || '';
     document.getElementById('edit-due').value = item.dueDate || '';
     document.getElementById('edit-waiting-on').value = item.waiting_on || '';
@@ -1694,6 +1913,15 @@ class BattlePlanApp {
 
     // Update all button states
     this.updateEditModalButtons();
+
+    // Load and display subtasks (hide section if this is a subtask itself)
+    const subtasksSection = document.getElementById('subtasks-section');
+    if (item.parent_id) {
+      subtasksSection.classList.add('hidden');
+    } else {
+      subtasksSection.classList.remove('hidden');
+      await this.renderSubtasksList();
+    }
 
     document.getElementById('edit-modal').classList.remove('hidden');
     document.getElementById('edit-text').focus();
@@ -1783,6 +2011,7 @@ class BattlePlanApp {
     const updates = {
       text: document.getElementById('edit-text').value.trim(),
       next_action: document.getElementById('edit-next-action').value.trim() || null,
+      notes: document.getElementById('edit-notes').value.trim() || null,
       scheduled_for_date: document.getElementById('edit-scheduled').value || null,
       dueDate: document.getElementById('edit-due').value || null,
       waiting_on: document.getElementById('edit-waiting-on').value.trim() || null,
@@ -1812,12 +2041,71 @@ class BattlePlanApp {
   async deleteEditItem() {
     if (!this.editingItemId) return;
     if (confirm('Delete this item?')) {
+      // Also delete subtasks
+      const subtasks = await db.getSubtasks(this.editingItemId);
+      for (const subtask of subtasks) {
+        await db.deleteItem(subtask.id);
+      }
       await db.deleteItem(this.editingItemId);
       this.closeEditModal();
       this.selectedItemId = null;
       await this.render();
       await this.updateHUD();
     }
+  }
+
+  // ==================== SUB-TASKS ====================
+
+  async renderSubtasksList() {
+    if (!this.editingItemId) return;
+
+    const subtasks = await db.getSubtasks(this.editingItemId);
+    const list = document.getElementById('subtasks-list');
+
+    if (subtasks.length === 0) {
+      list.innerHTML = '<li class="subtask-empty">No sub-tasks yet</li>';
+      return;
+    }
+
+    list.innerHTML = subtasks.map(subtask => `
+      <li class="subtask-item ${subtask.status === 'done' ? 'done' : ''}" data-id="${subtask.id}">
+        <label class="subtask-checkbox">
+          <input type="checkbox" ${subtask.status === 'done' ? 'checked' : ''} onchange="app.toggleSubtask('${subtask.id}')">
+          <span class="subtask-text">${this.escapeHtml(subtask.text)}</span>
+        </label>
+        <button class="subtask-delete" onclick="app.deleteSubtask('${subtask.id}')">&times;</button>
+      </li>
+    `).join('');
+  }
+
+  async addSubtask() {
+    if (!this.editingItemId) return;
+
+    const input = document.getElementById('subtask-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    await db.addSubtask(this.editingItemId, text);
+    input.value = '';
+    await this.renderSubtasksList();
+  }
+
+  async toggleSubtask(subtaskId) {
+    const subtask = await db.getItem(subtaskId);
+    if (!subtask) return;
+
+    const newStatus = subtask.status === 'done' ? 'today' : 'done';
+    await db.updateItem(subtaskId, { status: newStatus });
+    await this.renderSubtasksList();
+    await this.render();
+    await this.updateHUD();
+  }
+
+  async deleteSubtask(subtaskId) {
+    await db.deleteItem(subtaskId);
+    await this.renderSubtasksList();
+    await this.render();
+    await this.updateHUD();
   }
 
   // ==================== ROUTINES ====================
@@ -1964,6 +2252,85 @@ class BattlePlanApp {
     await db.runRoutine(id);
     alert(`Added ${routine.items.length} items to Today!`);
     this.navigateTo('today');
+  }
+
+  // ==================== ANALYTICS ====================
+
+  async renderAnalytics() {
+    const allItems = await db.getAllItems();
+    const doneItems = allItems.filter(i => i.status === 'done');
+
+    // Calculate this week's stats
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const thisWeekDone = doneItems.filter(i => {
+      const updated = new Date(i.updated_at);
+      return updated >= oneWeekAgo;
+    });
+
+    document.getElementById('stat-week-completed').textContent = thisWeekDone.length;
+
+    // Calculate total time this week
+    const weekTime = thisWeekDone.reduce((sum, i) => {
+      return sum + (i.actual_bucket || i.estimate_bucket || 0);
+    }, 0);
+    const weekHours = (weekTime / 60).toFixed(1);
+    document.getElementById('stat-week-time').textContent = `${weekHours}h`;
+
+    // Calculate estimation accuracy
+    const itemsWithBoth = doneItems.filter(i => i.estimate_bucket && i.actual_bucket);
+    if (itemsWithBoth.length > 0) {
+      let totalAccuracy = 0;
+      itemsWithBoth.forEach(i => {
+        const ratio = Math.min(i.estimate_bucket, i.actual_bucket) / Math.max(i.estimate_bucket, i.actual_bucket);
+        totalAccuracy += ratio * 100;
+      });
+      const avgAccuracy = Math.round(totalAccuracy / itemsWithBoth.length);
+      document.getElementById('stat-accuracy').textContent = `${avgAccuracy}%`;
+
+      // Accuracy hint
+      const hint = document.getElementById('stat-accuracy-hint');
+      if (avgAccuracy >= 80) {
+        hint.textContent = 'Great estimating! Keep it up.';
+      } else if (avgAccuracy >= 60) {
+        hint.textContent = 'Room for improvement. Try breaking down large tasks.';
+      } else {
+        hint.textContent = 'Consider using more buffer time or smaller estimates.';
+      }
+    } else {
+      document.getElementById('stat-accuracy').textContent = '-';
+      document.getElementById('stat-accuracy-hint').textContent = 'Complete tasks with estimates to see accuracy.';
+    }
+    document.getElementById('stat-estimated-count').textContent = itemsWithBoth.length;
+
+    // All time stats
+    document.getElementById('stat-total-completed').textContent = doneItems.length;
+
+    // Calculate weeks since first task
+    if (doneItems.length > 0) {
+      const firstTask = doneItems.reduce((oldest, item) => {
+        const date = new Date(item.created_at);
+        return date < oldest ? date : oldest;
+      }, new Date());
+      const weeksSinceFirst = Math.max(1, Math.ceil((new Date() - firstTask) / (7 * 24 * 60 * 60 * 1000)));
+      const avgPerWeek = (doneItems.length / weeksSinceFirst).toFixed(1);
+      document.getElementById('stat-avg-per-week').textContent = avgPerWeek;
+    } else {
+      document.getElementById('stat-avg-per-week').textContent = '0';
+    }
+
+    // Stats by tag
+    const tagStats = {};
+    doneItems.forEach(item => {
+      const tag = item.tag || 'Untagged';
+      tagStats[tag] = (tagStats[tag] || 0) + 1;
+    });
+
+    const tagHtml = Object.entries(tagStats)
+      .sort((a, b) => b[1] - a[1])
+      .map(([tag, count]) => `<div class="tag-stat"><span>${tag}</span><span>${count}</span></div>`)
+      .join('');
+    document.getElementById('stat-by-tag').innerHTML = tagHtml || '<p class="stat-hint">No completed tasks yet</p>';
   }
 
   // ==================== FOCUS MODE ====================
@@ -2132,6 +2499,32 @@ class BattlePlanApp {
   cancelImport() {
     this.pendingImportData = null;
     document.getElementById('import-confirm-modal').classList.add('hidden');
+  }
+
+  async confirmWaiting() {
+    if (!this.pendingWaitingId) return;
+
+    const waitingOn = document.getElementById('waiting-input').value.trim();
+    const updates = {
+      status: 'waiting',
+      waiting_on: waitingOn || null,
+      scheduled_for_date: null,
+      isTop3: false,
+      top3Order: null
+    };
+
+    await db.updateItem(this.pendingWaitingId, updates);
+    document.getElementById('waiting-modal').classList.add('hidden');
+    this.pendingWaitingId = null;
+
+    await this.render();
+    await this.updateHUD();
+    this.showUndoToast('Moved to Waiting');
+  }
+
+  cancelWaiting() {
+    this.pendingWaitingId = null;
+    document.getElementById('waiting-modal').classList.add('hidden');
   }
 
   // ==================== SORTING ====================
