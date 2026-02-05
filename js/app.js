@@ -1713,118 +1713,185 @@ class BattlePlanApp {
   }
 
   async executeSimpleVoiceCommand(text) {
-    // Simple command parser (no AI) - supports basic voice commands
+    // Smart command parser (no AI) - understands natural phrases
     const lower = text.toLowerCase().trim();
+    const original = text.trim();
 
-    // "add task <text>" or "add <text>"
-    if (lower.startsWith('add task ')) {
-      const taskText = text.substring(9).trim();
-      await db.addItem(taskText);
-      await this.render();
-      this.showToast(`Added: ${taskText.substring(0, 25)}...`);
-      return;
-    }
-    if (lower.startsWith('add ')) {
-      const taskText = text.substring(4).trim();
-      await db.addItem(taskText);
-      await this.render();
-      this.showToast(`Added: ${taskText.substring(0, 25)}...`);
-      return;
-    }
-
-    // "mark done <keyword>" / "complete <keyword>" / "finish <keyword>" / "done <keyword>"
-    const doneMatch = lower.match(/^(mark done|complete|finish|done)\s+(.+)$/);
-    if (doneMatch) {
-      const keyword = doneMatch[2].trim();
-      const item = await this.findItemByKeyword(keyword);
-      if (item) {
-        await this.setItemStatus(item.id, 'done');
-        this.showToast(`Done: ${item.text.substring(0, 20)}...`);
-      } else {
-        this.showToast(`No task found for "${keyword}"`);
+    // ===== COMPLETION PATTERNS =====
+    // "I finished...", "finished...", "did...", "completed...", "I did the...", "just finished..."
+    const donePatterns = [
+      /^(?:i\s+)?(?:just\s+)?(?:finished|completed|did)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i,
+      /^(?:mark\s+)?(?:done|complete|finish)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i,
+      /^(?:the\s+)?(.+?)\s+is\s+(?:done|finished|completed)$/i
+    ];
+    for (const pattern of donePatterns) {
+      const match = lower.match(pattern);
+      if (match) {
+        const keyword = match[1].trim();
+        const item = await this.findItemByKeyword(keyword);
+        if (item) {
+          await this.setItemStatus(item.id, 'done');
+          this.showToast(`Done: ${item.text.substring(0, 25)}...`);
+        } else {
+          this.showToast(`No task found for "${keyword}"`);
+        }
+        return;
       }
+    }
+
+    // ===== SCHEDULING PATTERNS =====
+    // "tomorrow buy groceries" or "buy groceries tomorrow"
+    if (lower.startsWith('tomorrow ')) {
+      const taskText = original.substring(9).trim();
+      const item = await db.addItem(taskText);
+      await db.setTomorrow(item.id);
+      await this.render();
+      this.showToast(`Tomorrow: ${taskText.substring(0, 25)}...`);
+      return;
+    }
+    if (lower.endsWith(' tomorrow')) {
+      const taskText = original.slice(0, -9).trim();
+      const item = await db.addItem(taskText);
+      await db.setTomorrow(item.id);
+      await this.render();
+      this.showToast(`Tomorrow: ${taskText.substring(0, 25)}...`);
       return;
     }
 
-    // "move <keyword> to tomorrow"
-    const tomorrowMatch = lower.match(/^move\s+(.+)\s+to tomorrow$/);
-    if (tomorrowMatch) {
-      const keyword = tomorrowMatch[1].trim();
+    // "move <task> to tomorrow/today"
+    const moveMatch = lower.match(/^move\s+(?:the\s+)?(.+?)\s+to\s+(today|tomorrow)$/);
+    if (moveMatch) {
+      const keyword = moveMatch[1].trim();
+      const target = moveMatch[2];
       const item = await this.findItemByKeyword(keyword);
       if (item) {
-        await db.setTomorrow(item.id);
+        if (target === 'tomorrow') {
+          await db.setTomorrow(item.id);
+        } else {
+          await db.setToday(item.id);
+        }
         await this.render();
         await this.updateHUD();
-        this.showToast(`Tomorrow: ${item.text.substring(0, 20)}...`);
+        this.showToast(`${target === 'tomorrow' ? 'Tomorrow' : 'Today'}: ${item.text.substring(0, 20)}...`);
       } else {
         this.showToast(`No task found for "${keyword}"`);
       }
       return;
     }
 
-    // "move <keyword> to today"
-    const todayMatch = lower.match(/^move\s+(.+)\s+to today$/);
-    if (todayMatch) {
-      const keyword = todayMatch[1].trim();
-      const item = await this.findItemByKeyword(keyword);
-      if (item) {
-        await db.setToday(item.id);
-        await this.render();
-        await this.updateHUD();
-        this.showToast(`Today: ${item.text.substring(0, 20)}...`);
-      } else {
-        this.showToast(`No task found for "${keyword}"`);
+    // ===== NAVIGATION PATTERNS =====
+    // "go to...", "show...", "open...", "take me to...", "switch to...", "view..."
+    const navPatterns = [
+      /^(?:go to|show|open|take me to|switch to|view)\s+(?:the\s+)?(?:my\s+)?(inbox|today|tomorrow|done|completed|routines?|settings?)$/i
+    ];
+    for (const pattern of navPatterns) {
+      const match = lower.match(pattern);
+      if (match) {
+        let page = match[1].toLowerCase();
+        // Normalize page names
+        if (page === 'completed') page = 'done';
+        if (page === 'routine') page = 'routines';
+        if (page === 'setting') page = 'settings';
+        this.navigateTo(page);
+        this.showToast(`Navigated to ${page}`);
+        return;
       }
+    }
+
+    // ===== STATS / QUESTIONS =====
+    // "how many tasks", "what's on my list", "status", "how am I doing"
+    const statsPatterns = [
+      /^(?:how many|what'?s?\s+on|show me|what do i have)/i,
+      /^(?:status|my tasks|task count|how am i doing)/i
+    ];
+    for (const pattern of statsPatterns) {
+      if (pattern.test(lower)) {
+        const stats = await this.gatherFullStats();
+        this.showToast(`Today: ${stats.todayCount} tasks, ${stats.top3Count} in Top 3, ${stats.freeTime} min free`, 'info', 5000);
+        return;
+      }
+    }
+
+    // ===== FIND / SEARCH =====
+    // "find...", "where is...", "search for...", "look for..."
+    const findMatch = lower.match(/^(?:find|where is|search for|look for|locate)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i);
+    if (findMatch) {
+      const keyword = findMatch[1].trim();
+      await this.voiceFindTask(keyword);
       return;
     }
 
-    // Navigation: "go to <page>" / "show <page>" / "open <page>"
-    const navMatch = lower.match(/^(go to|show|open)\s+(inbox|today|tomorrow|done|routines|settings)$/);
-    if (navMatch) {
-      this.navigateTo(navMatch[2]);
-      this.showToast(`Navigated to ${navMatch[2]}`);
-      return;
-    }
-
-    // Focus timer
-    if (lower === 'start focus' || lower === 'focus mode' || lower === 'focus') {
+    // ===== FOCUS TIMER =====
+    if (/^(?:start\s+)?focus(?:\s+mode)?$/.test(lower) || lower === 'lets focus' || lower === "let's focus") {
       this.startFocus();
       this.showToast('Focus mode started');
       return;
     }
-    if (lower === 'stop focus' || lower === 'end focus' || lower === 'stop timer') {
+    if (/^(?:stop|end|cancel)\s+(?:focus|timer)$/.test(lower) || lower === 'stop' || lower === "i'm done") {
       this.stopFocus();
       this.showToast('Focus mode stopped');
       return;
     }
-
-    // Focus with duration: "focus for 30 minutes" / "focus 45 min"
-    const focusMatch = lower.match(/^focus(?:\s+for)?\s+(\d+)\s*(?:min|minutes)?$/);
-    if (focusMatch) {
-      const mins = parseInt(focusMatch[1]);
+    // "focus for 30 minutes" / "25 minute focus" / "pomodoro"
+    const focusMatch = lower.match(/^(?:focus(?:\s+for)?|start)\s*(\d+)\s*(?:min|minutes?)?$/);
+    const focusMatch2 = lower.match(/^(\d+)\s*(?:min|minutes?)\s*(?:focus|timer)$/);
+    if (focusMatch || focusMatch2) {
+      const mins = parseInt((focusMatch || focusMatch2)[1]);
       this.startFocus(mins);
-      this.showToast(`Focus mode: ${mins} minutes`);
+      this.showToast(`Focus: ${mins} minutes`);
+      return;
+    }
+    if (lower === 'pomodoro') {
+      this.startFocus(25);
+      this.showToast('Pomodoro: 25 minutes');
       return;
     }
 
-    // Run routine: "run <routine name>" / "run routine <name>"
-    const routineMatch = lower.match(/^run\s+(?:routine\s+)?(.+)$/);
-    if (routineMatch) {
+    // ===== RUN ROUTINE =====
+    // "run...", "start routine...", "do my..."
+    const routineMatch = lower.match(/^(?:run|start|do)\s+(?:my\s+)?(?:routine\s+)?(.+?)(?:\s+routine)?$/i);
+    if (routineMatch && !routineMatch[1].match(/^focus|timer$/)) {
       await this.voiceRunRoutine(routineMatch[1].trim());
       return;
     }
 
-    // Help
-    if (lower === 'help' || lower === 'what can i say' || lower === 'commands') {
-      this.showToast('Say: "add task...", "done...", "go to today", "focus"', 'info', 5000);
+    // ===== HELP =====
+    if (/^(?:help|what can i say|commands|options)$/.test(lower)) {
+      this.showToast('Try: "buy milk", "finished groceries", "tomorrow call mom", "go to today"', 'info', 6000);
       return;
     }
 
-    // No command matched - add as task
-    await db.addItem(text.trim());
+    // ===== NATURAL TASK ADDITIONS =====
+    // "buy...", "get...", "pick up...", "need to...", "remind me to...", "remember to...", "gotta...", "I need to..."
+    const addPrefixes = [
+      /^(?:add\s+(?:task\s+)?)/i,
+      /^(?:i\s+)?(?:need to|gotta|have to|should|must)\s+/i,
+      /^(?:remind me to|remember to|don't forget to)\s+/i,
+      /^(?:buy|get|pick up|grab|order)\s+/i,
+      /^(?:call|email|text|message|contact)\s+/i,
+      /^(?:schedule|book|plan)\s+/i,
+      /^(?:fix|repair|update|check)\s+/i,
+      /^(?:clean|organize|sort)\s+/i,
+      /^(?:make|create|write|draft)\s+/i,
+      /^(?:pay|send|submit)\s+/i
+    ];
+
+    for (const pattern of addPrefixes) {
+      if (pattern.test(lower)) {
+        // Use original text to preserve casing
+        await db.addItem(original);
+        await this.render();
+        this.showToast(`Added: ${original.substring(0, 30)}...`);
+        return;
+      }
+    }
+
+    // ===== FALLBACK: Add as task =====
+    // Anything not matched is added as a new task
+    await db.addItem(original);
     await this.render();
     await this.updateHUD();
-    this.showToast(`Added: ${text.substring(0, 30)}...`);
+    this.showToast(`Added: ${original.substring(0, 30)}...`);
   }
 
   async voiceCompleteTask(keyword) {
