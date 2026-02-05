@@ -95,6 +95,11 @@ class BattlePlanApp {
     this.scoreCache = new Map();
     this.scoreCacheTime = 0;
 
+    // HUD cache for performance (avoid recalculating on every navigation)
+    this.hudCache = null;
+    this.hudCacheTime = 0;
+    this.hudCacheTTL = 3000; // 3 seconds
+
     // Archive state
     this.showArchived = false;
 
@@ -393,6 +398,11 @@ class BattlePlanApp {
       if (e.key === 'Escape') this.cancelWaiting();
     });
 
+    // Overdue Modal
+    document.getElementById('hud-overdue').addEventListener('click', () => this.showOverdueModal());
+    document.getElementById('overdue-reschedule-all-btn').addEventListener('click', () => this.rescheduleAllOverdue());
+    document.getElementById('overdue-close-btn').addEventListener('click', () => this.closeOverdueModal());
+
     // Focus Mode
     document.getElementById('focus-pause-btn').addEventListener('click', () => this.toggleFocusPause());
     document.getElementById('focus-stop-btn').addEventListener('click', () => this.stopFocus());
@@ -484,7 +494,21 @@ class BattlePlanApp {
 
   // ==================== HUD ====================
 
-  async updateHUD() {
+  invalidateHudCache() {
+    this.hudCache = null;
+    this.hudCacheTime = 0;
+  }
+
+  async updateHUD(forceRefresh = false) {
+    const now = Date.now();
+
+    // Use cache if valid and not forcing refresh
+    if (!forceRefresh && this.hudCache && (now - this.hudCacheTime) < this.hudCacheTTL) {
+      this.applyHudCache();
+      return;
+    }
+
+    // Calculate fresh HUD data
     const stats = await db.getTodayStats();
     const usableCapacity = await db.getUsableCapacity();
 
@@ -506,40 +530,6 @@ class BattlePlanApp {
       }
     }
 
-    document.getElementById('hud-buffered').textContent = totalBuffered;
-    document.getElementById('hud-capacity').textContent = usableCapacity;
-    document.getElementById('hud-top3-count').textContent = stats.top3Count;
-    document.getElementById('hud-monster-count').textContent = monsterCount;
-    document.getElementById('hud-rated').textContent = ratedCount;
-    document.getElementById('hud-unrated').textContent = unratedCount;
-
-    // Monster visibility
-    const monsterEl = document.getElementById('hud-monster');
-    if (monsterCount > 0) {
-      monsterEl.style.color = 'var(--monster)';
-    } else {
-      monsterEl.style.color = '';
-    }
-
-    // Overdue
-    const overdueEl = document.getElementById('hud-overdue');
-    const overdueCountEl = document.getElementById('hud-overdue-count');
-
-    if (stats.overdueCount > 0) {
-      overdueEl.classList.remove('hidden');
-      overdueCountEl.textContent = stats.overdueCount;
-    } else {
-      overdueEl.classList.add('hidden');
-    }
-
-    // Capacity warning
-    const warningEl = document.getElementById('capacity-warning');
-    if (totalBuffered > usableCapacity) {
-      warningEl.classList.remove('hidden');
-    } else {
-      warningEl.classList.add('hidden');
-    }
-
     // Urgency stats (across ALL non-done items)
     const allItems = await db.getAllItems();
     let dueOverdue = 0, dueCritical = 0, dueUrgent = 0, dueWarning = 0;
@@ -552,6 +542,54 @@ class BattlePlanApp {
       else if (urgency.tier === 'urgency-warning') dueWarning++;
     }
 
+    // Store in cache
+    this.hudCache = {
+      totalBuffered, usableCapacity, monsterCount, ratedCount, unratedCount,
+      top3Count: stats.top3Count, overdueCount: stats.overdueCount,
+      dueOverdue, dueCritical, dueUrgent, dueWarning
+    };
+    this.hudCacheTime = now;
+
+    // Apply to DOM
+    this.applyHudCache();
+  }
+
+  applyHudCache() {
+    if (!this.hudCache) return;
+
+    const { totalBuffered, usableCapacity, monsterCount, ratedCount, unratedCount,
+            top3Count, overdueCount, dueOverdue, dueCritical, dueUrgent, dueWarning } = this.hudCache;
+
+    document.getElementById('hud-buffered').textContent = totalBuffered;
+    document.getElementById('hud-capacity').textContent = usableCapacity;
+    document.getElementById('hud-top3-count').textContent = top3Count;
+    document.getElementById('hud-monster-count').textContent = monsterCount;
+    document.getElementById('hud-rated').textContent = ratedCount;
+    document.getElementById('hud-unrated').textContent = unratedCount;
+
+    // Monster visibility
+    const monsterEl = document.getElementById('hud-monster');
+    monsterEl.style.color = monsterCount > 0 ? 'var(--monster)' : '';
+
+    // Overdue
+    const overdueEl = document.getElementById('hud-overdue');
+    const overdueCountEl = document.getElementById('hud-overdue-count');
+    if (overdueCount > 0) {
+      overdueEl.classList.remove('hidden');
+      overdueCountEl.textContent = overdueCount;
+    } else {
+      overdueEl.classList.add('hidden');
+    }
+
+    // Capacity warning
+    const warningEl = document.getElementById('capacity-warning');
+    if (totalBuffered > usableCapacity) {
+      warningEl.classList.remove('hidden');
+    } else {
+      warningEl.classList.add('hidden');
+    }
+
+    // Urgency row
     const totalDueItems = dueOverdue + dueCritical + dueUrgent + dueWarning;
     const urgencyRow = document.getElementById('hud-urgency-row');
 
@@ -562,7 +600,6 @@ class BattlePlanApp {
       document.getElementById('hud-due-urgent-count').textContent = dueUrgent;
       document.getElementById('hud-due-warning-count').textContent = dueWarning;
 
-      // Only show non-zero categories
       document.getElementById('hud-due-overdue').style.display = dueOverdue ? '' : 'none';
       document.getElementById('hud-due-critical').style.display = dueCritical ? '' : 'none';
       document.getElementById('hud-due-urgent').style.display = dueUrgent ? '' : 'none';
@@ -608,59 +645,82 @@ class BattlePlanApp {
   }
 
   async getFilteredItems(items) {
-    if (!this.searchQuery.trim()) return items;
+    const countEl = document.getElementById('search-count');
+
+    if (!this.searchQuery.trim()) {
+      // Hide count when not searching
+      if (countEl) countEl.classList.add('hidden');
+      return items;
+    }
 
     const query = this.searchQuery.toLowerCase().trim();
 
     // Always search across all items globally
     const allItems = await db.getAllItems();
-    return allItems.filter(item =>
+    const filtered = allItems.filter(item =>
       item.status !== 'done' &&
       (item.text.toLowerCase().includes(query) ||
       (item.next_action && item.next_action.toLowerCase().includes(query)) ||
       (item.waiting_on && item.waiting_on.toLowerCase().includes(query)))
     );
+
+    // Show search result count
+    if (countEl) {
+      countEl.textContent = `${filtered.length} found`;
+      countEl.classList.remove('hidden');
+    }
+
+    return filtered;
   }
 
   async renderInbox() {
-    let items = await db.getInboxItems();
-    items = await this.getFilteredItems(items);
+    try {
+      let items = await db.getInboxItems();
+      items = await this.getFilteredItems(items);
 
-    const list = document.getElementById('inbox-list');
+      const list = document.getElementById('inbox-list');
 
-    // Sort by priority (rated items first, then by score, then newest)
-    const sorted = this.sortByPriority(items);
+      // Sort by priority (rated items first, then by score, then newest)
+      const sorted = this.sortByPriority(items);
 
-    if (sorted.length === 0) {
-      const msg = this.searchQuery
-        ? 'No matching items. Try different keywords or check "Search all" to include done tasks.'
-        : 'Inbox is empty. Add a task above to get started!';
-      list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
-      return;
+      if (sorted.length === 0) {
+        const msg = this.searchQuery
+          ? 'No matching items. Try different keywords or check "Search all" to include done tasks.'
+          : 'Inbox is empty. Add a task above to get started!';
+        list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
+        return;
+      }
+
+      list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
+      this.bindItemEvents();
+    } catch (err) {
+      debugLog('error', 'Error rendering inbox', err);
+      this.showToast('Error loading inbox');
     }
-
-    list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
-    this.bindItemEvents();
   }
 
   async renderToday() {
-    let items = await db.getTodayItems();
-    items = await this.getFilteredItems(items);
+    try {
+      let items = await db.getTodayItems();
+      items = await this.getFilteredItems(items);
 
-    const top3Items = items.filter(i => i.isTop3)
-      .sort((a, b) => (a.top3Order || 0) - (b.top3Order || 0));
+      const top3Items = items.filter(i => i.isTop3)
+        .sort((a, b) => (a.top3Order || 0) - (b.top3Order || 0));
 
-    // Sort other items by priority score + time sensitivity
-    const otherItems = this.sortByPriority(items.filter(i => !i.isTop3));
+      // Sort other items by priority score + time sensitivity
+      const otherItems = this.sortByPriority(items.filter(i => !i.isTop3));
 
-    document.getElementById('top3-count').textContent = `(${top3Items.length}/3)`;
+      document.getElementById('top3-count').textContent = `(${top3Items.length}/3)`;
 
-    // Top 3 list
-    const top3List = document.getElementById('top3-list');
-    if (top3Items.length === 0) {
-      top3List.innerHTML = '<li class="empty-state"><p>Tap "Suggest Top 3" to auto-select priorities</p></li>';
-    } else {
-      try {
+      // Top 3 list
+      const top3List = document.getElementById('top3-list');
+      if (top3Items.length === 0) {
+        const hasRatedItems = otherItems.some(i => db.isRated(i));
+        const msg = hasRatedItems
+          ? 'Tap "Suggest Top 3" to auto-select your priorities for today'
+          : 'Rate some tasks first (double-tap to edit), then use "Suggest Top 3"';
+        top3List.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
+      } else {
         const top3Results = await Promise.allSettled(top3Items.map(async (item, index) =>
           await this.renderItemAsync(item, { isTop3: true, top3Number: index + 1 })
         ));
@@ -668,19 +728,18 @@ class BattlePlanApp {
           .filter(r => r.status === 'fulfilled')
           .map(r => r.value);
         top3List.innerHTML = top3Html.join('');
-      } catch (e) {
-        debugLog('error', 'Error rendering Top 3', e);
-        top3List.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
       }
-    }
 
-    // Other today items
-    const todayList = document.getElementById('today-list');
-    if (otherItems.length === 0) {
-      const msg = this.searchQuery ? 'No matching items' : 'Mark items as Today in Inbox';
-      todayList.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
-    } else {
-      try {
+      // Other today items
+      const todayList = document.getElementById('today-list');
+      if (otherItems.length === 0) {
+        const msg = this.searchQuery
+          ? 'No matching items'
+          : top3Items.length > 0
+            ? 'Focus on your Top 3! Add more tasks from Inbox if needed.'
+            : 'Go to Inbox and tap "Today" on tasks you want to work on today';
+        todayList.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
+      } else {
         const otherResults = await Promise.allSettled(otherItems.map(async item =>
           await this.renderItemAsync(item, { showTop3Toggle: true })
         ));
@@ -688,63 +747,73 @@ class BattlePlanApp {
           .filter(r => r.status === 'fulfilled')
           .map(r => r.value);
         todayList.innerHTML = otherHtml.join('');
-      } catch (e) {
-        debugLog('error', 'Error rendering today items', e);
-        todayList.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
       }
-    }
 
-    this.bindItemEvents();
+      this.bindItemEvents();
+    } catch (err) {
+      debugLog('error', 'Error rendering today', err);
+      this.showToast('Error loading today items');
+    }
   }
 
   async renderTomorrow() {
-    let items = await db.getTomorrowItems();
-    items = await this.getFilteredItems(items);
+    try {
+      let items = await db.getTomorrowItems();
+      items = await this.getFilteredItems(items);
 
-    const list = document.getElementById('tomorrow-list');
+      const list = document.getElementById('tomorrow-list');
 
-    if (items.length === 0) {
-      const msg = this.searchQuery ? 'No matching items' : 'Nothing scheduled for tomorrow';
-      list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
-      return;
+      if (items.length === 0) {
+        const msg = this.searchQuery ? 'No matching items' : 'Nothing scheduled for tomorrow';
+        list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
+        return;
+      }
+
+      // Sort by priority score + time sensitivity
+      const sorted = this.sortByPriority(items);
+      list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
+      this.bindItemEvents();
+    } catch (err) {
+      debugLog('error', 'Error rendering tomorrow', err);
+      this.showToast('Error loading tomorrow items');
     }
-
-    // Sort by priority score + time sensitivity
-    const sorted = this.sortByPriority(items);
-    list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
-    this.bindItemEvents();
   }
 
   async renderByStatus(status) {
-    let items;
+    try {
+      let items;
 
-    // Special handling for done status - filter archived items
-    if (status === 'done') {
-      items = await db.getDoneItems(this.showArchived);
-    } else {
-      items = await db.getItemsByStatus(status);
-    }
-
-    items = await this.getFilteredItems(items);
-
-    const list = document.getElementById(`${status}-list`);
-
-    if (items.length === 0) {
-      let msg = this.searchQuery ? 'No matching items' : `No ${status} items`;
-      if (status === 'done' && !this.showArchived) {
-        msg = 'No recent completed tasks. Check "Show archived" to see older items.';
+      // Special handling for done status - filter archived items
+      if (status === 'done') {
+        items = await db.getDoneItems(this.showArchived);
+      } else {
+        items = await db.getItemsByStatus(status);
       }
-      list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
-      return;
+
+      items = await this.getFilteredItems(items);
+
+      const list = document.getElementById(`${status}-list`);
+
+      if (items.length === 0) {
+        let msg = this.searchQuery ? 'No matching items' : `No ${status} items`;
+        if (status === 'done' && !this.showArchived) {
+          msg = 'No recent completed tasks. Check "Show archived" to see older items.';
+        }
+        list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
+        return;
+      }
+
+      // Sort by priority score + time sensitivity (done items by completion date)
+      const sorted = status === 'done'
+        ? items.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+        : this.sortByPriority(items);
+
+      list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
+      this.bindItemEvents();
+    } catch (err) {
+      debugLog('error', `Error rendering ${status}`, err);
+      this.showToast(`Error loading ${status} items`);
     }
-
-    // Sort by priority score + time sensitivity (done items by completion date)
-    const sorted = status === 'done'
-      ? items.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
-      : this.sortByPriority(items);
-
-    list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
-    this.bindItemEvents();
   }
 
   async archiveOldTasks() {
@@ -909,7 +978,7 @@ class BattlePlanApp {
       <li class="item-wrapper" data-id="${item.id}">
         ${swipeLeftTray}
         <div class="item ${statusClass} ${selectedClass} ${overdueClass} ${urgencyClass}" data-id="${item.id}">
-          ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
+          ${top3Number ? `<span class="top3-badge">${top3Number}${item.top3Locked ? '<span class="lock-icon" title="Locked - survives daily reset">🔒</span>' : ''}</span>` : ''}
           <div class="item-header">
             <div class="item-text">${this.highlightSearch(item.text)}</div>
             ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
@@ -1318,6 +1387,7 @@ class BattlePlanApp {
     if (this.isListening || this.voiceStartLock) {
       if (this.isListening) {
         this.stopVoiceInput();
+        this.showToast('Voice input stopped');
       }
       return;
     }
@@ -1507,12 +1577,27 @@ class BattlePlanApp {
 
   // ==================== UNDO ====================
 
-  async saveForUndo(itemId, description) {
+  async saveForUndo(itemId, description, type = 'move') {
     const item = await db.getItem(itemId);
     if (item) {
       this.lastAction = {
+        type,
         itemId,
         previousState: { ...item },
+        description,
+        timestamp: Date.now()
+      };
+    }
+  }
+
+  async saveDeleteForUndo(itemId, description, subtasks = []) {
+    const item = await db.getItem(itemId);
+    if (item) {
+      this.lastAction = {
+        type: 'delete',
+        itemId,
+        previousState: { ...item },
+        deletedSubtasks: subtasks.map(s => ({ ...s })),
         description,
         timestamp: Date.now()
       };
@@ -1566,15 +1651,27 @@ class BattlePlanApp {
   }
 
   async undo() {
+    this.invalidateHudCache(); // Data is changing
     if (!this.lastAction) {
       this.showToast('Nothing to undo');
       return;
     }
 
-    const { itemId, previousState } = this.lastAction;
+    const { type, itemId, previousState, deletedSubtasks } = this.lastAction;
 
-    // Restore the previous state
-    await db.updateItem(itemId, previousState);
+    if (type === 'delete') {
+      // Restore deleted item
+      await db.restoreItem(previousState);
+      // Restore any deleted subtasks
+      if (deletedSubtasks && deletedSubtasks.length > 0) {
+        for (const subtask of deletedSubtasks) {
+          await db.restoreItem(subtask);
+        }
+      }
+    } else {
+      // Restore the previous state (for moves)
+      await db.updateItem(itemId, previousState);
+    }
 
     this.hideToast();
     this.lastAction = null;
@@ -1710,6 +1807,7 @@ class BattlePlanApp {
   }
 
   async setItemStatus(id, status) {
+    this.invalidateHudCache(); // Data is changing
     const item = await db.getItem(id);
 
     // Save for undo before making changes
@@ -1938,17 +2036,36 @@ class BattlePlanApp {
       this.openEditModal(this.selectedItemId);
     }
 
-    // Delete/Backspace to delete
+    // Delete/Backspace to delete (with undo)
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
-      if (confirm('Delete this item?')) {
-        db.deleteItem(this.selectedItemId).then(() => {
-          this.selectedItemId = null;
-          this.render();
-          this.updateHUD();
-        });
-      }
+      this.deleteItemWithUndo(this.selectedItemId);
     }
+  }
+
+  async deleteItemWithUndo(itemId) {
+    if (!itemId) return;
+    this.invalidateHudCache(); // Data is changing
+
+    // Get subtasks before deleting
+    const subtasks = await db.getSubtasks(itemId);
+
+    // Save for undo
+    await this.saveDeleteForUndo(itemId, 'Deleted', subtasks);
+
+    // Delete subtasks first
+    for (const subtask of subtasks) {
+      await db.deleteItem(subtask.id);
+    }
+    // Delete main item
+    await db.deleteItem(itemId);
+
+    this.selectedItemId = null;
+    await this.render();
+    await this.updateHUD();
+
+    // Show undo toast
+    this.showUndoToast('Task deleted');
   }
 
   handleModalKeydown(e, modal) {
@@ -2116,6 +2233,7 @@ class BattlePlanApp {
 
   async saveEditItem() {
     if (!this.editingItemId) return;
+    this.invalidateHudCache(); // Data is changing
 
     const recurrenceValue = document.getElementById('edit-recurrence').value;
     const recurrenceDayValue = document.getElementById('edit-recurrence-day').value;
@@ -2164,18 +2282,28 @@ class BattlePlanApp {
 
   async deleteEditItem() {
     if (!this.editingItemId) return;
-    if (confirm('Delete this item?')) {
-      // Also delete subtasks
-      const subtasks = await db.getSubtasks(this.editingItemId);
-      for (const subtask of subtasks) {
-        await db.deleteItem(subtask.id);
-      }
-      await db.deleteItem(this.editingItemId);
-      this.closeEditModal();
-      this.selectedItemId = null;
-      await this.render();
-      await this.updateHUD();
+    this.invalidateHudCache(); // Data is changing
+
+    // Get subtasks before deleting (for undo)
+    const subtasks = await db.getSubtasks(this.editingItemId);
+
+    // Save for undo before deleting
+    await this.saveDeleteForUndo(this.editingItemId, 'Deleted', subtasks);
+
+    // Delete subtasks first
+    for (const subtask of subtasks) {
+      await db.deleteItem(subtask.id);
     }
+    // Delete main item
+    await db.deleteItem(this.editingItemId);
+
+    this.closeEditModal();
+    this.selectedItemId = null;
+    await this.render();
+    await this.updateHUD();
+
+    // Show undo toast
+    this.showUndoToast('Task deleted');
   }
 
   // ==================== SUB-TASKS ====================
@@ -2753,6 +2881,80 @@ class BattlePlanApp {
   cancelWaiting() {
     this.pendingWaitingId = null;
     document.getElementById('waiting-modal').classList.add('hidden');
+  }
+
+  // ==================== OVERDUE MANAGEMENT ====================
+
+  async showOverdueModal() {
+    const allItems = await db.getAllItems();
+    const overdueItems = allItems.filter(item => db.isOverdue(item) && item.status !== 'done');
+
+    const list = document.getElementById('overdue-list');
+    if (overdueItems.length === 0) {
+      list.innerHTML = '<li>No overdue tasks!</li>';
+    } else {
+      list.innerHTML = overdueItems.map(item => `
+        <li data-id="${item.id}">
+          <div class="task-info">
+            <span class="task-text">${this.escapeHtml(item.text)}</span>
+            <span class="task-date">Scheduled: ${item.scheduled_for_date}</span>
+          </div>
+          <div class="task-actions">
+            <button class="btn-today" data-action="today">Today</button>
+            <button class="btn-done" data-action="done">Done</button>
+          </div>
+        </li>
+      `).join('');
+
+      // Bind action buttons
+      list.querySelectorAll('.task-actions button').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const li = e.target.closest('li');
+          const itemId = li.dataset.id;
+          const action = e.target.dataset.action;
+
+          this.invalidateHudCache();
+          if (action === 'today') {
+            await db.setToday(itemId);
+          } else if (action === 'done') {
+            await db.updateItem(itemId, { status: 'done', isTop3: false, top3Order: null });
+          }
+
+          // Remove from list
+          li.remove();
+
+          // Check if list is empty
+          if (list.children.length === 0) {
+            list.innerHTML = '<li>All overdue tasks handled!</li>';
+          }
+
+          await this.render();
+          await this.updateHUD();
+        });
+      });
+    }
+
+    document.getElementById('overdue-modal').classList.remove('hidden');
+  }
+
+  async rescheduleAllOverdue() {
+    const allItems = await db.getAllItems();
+    const overdueItems = allItems.filter(item => db.isOverdue(item) && item.status !== 'done');
+
+    this.invalidateHudCache();
+
+    for (const item of overdueItems) {
+      await db.setToday(item.id);
+    }
+
+    this.closeOverdueModal();
+    this.showToast(`Moved ${overdueItems.length} task${overdueItems.length !== 1 ? 's' : ''} to Today`);
+    await this.render();
+    await this.updateHUD();
+  }
+
+  closeOverdueModal() {
+    document.getElementById('overdue-modal').classList.add('hidden');
   }
 
   // ==================== SORTING ====================

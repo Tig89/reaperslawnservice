@@ -205,6 +205,21 @@ class BattlePlanDB {
     });
   }
 
+  // Restore a previously deleted item (for undo functionality)
+  async restoreItem(item) {
+    await this.ready;
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readwrite');
+      const store = tx.objectStore('items');
+      const request = store.put(item);
+      request.onsuccess = () => {
+        this.scheduleAutoBackup();
+        resolve(item);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async getAllItems() {
     await this.ready;
     return new Promise((resolve, reject) => {
@@ -298,6 +313,21 @@ class BattlePlanDB {
 
   isMonster(item) {
     return item.estimate_bucket >= 90 || item.confidence === 'low';
+  }
+
+  // Get total estimate including subtasks
+  async getEffectiveEstimate(item) {
+    const baseEstimate = item.estimate_bucket || 0;
+    const subtasks = await this.getSubtasks(item.id);
+    const subtaskTime = subtasks.reduce((sum, s) => sum + (s.estimate_bucket || 0), 0);
+    return baseEstimate + subtaskTime;
+  }
+
+  // Check if item is a monster including subtask time
+  async isMonsterAsync(item) {
+    if (item.confidence === 'low') return true;
+    const effectiveEstimate = await this.getEffectiveEstimate(item);
+    return effectiveEstimate >= 90;
   }
 
   // ==================== SCORING (ACE+LMT) ====================
@@ -483,12 +513,12 @@ class BattlePlanDB {
       !(i.isTop3 && i.top3Date === today && i.top3Locked)
     );
 
-    // Calculate scores for candidates
+    // Calculate scores for candidates (including subtask time for monster check)
     const scored = await Promise.all(candidates.map(async item => {
       const scores = this.calculateScores(item);
       const bufferedMinutes = await this.getBufferedMinutes(item);
       const isUrgent = item.C === 5;
-      const isMonster = this.isMonster(item);
+      const isMonster = await this.isMonsterAsync(item);
       return { ...item, ...scores, bufferedMinutes, isUrgent, isMonster };
     }));
 
@@ -507,7 +537,7 @@ class BattlePlanDB {
     for (const item of lockedTop3) {
       const buffered = await this.getBufferedMinutes(item);
       usedMinutes += buffered || 0;
-      if (this.isMonster(item)) monsterCount++;
+      if (await this.isMonsterAsync(item)) monsterCount++;
       selected.push({ ...item, bufferedMinutes: buffered });
     }
 
@@ -591,9 +621,12 @@ class BattlePlanDB {
       const currentTop3 = await this.getTop3Items();
       const usableCapacity = await this.getUsableCapacity();
 
-      // Check monster rule
-      const isMonster = this.isMonster(item);
-      const currentMonsterCount = currentTop3.filter(i => this.isMonster(i)).length;
+      // Check monster rule (including subtask time)
+      const isMonster = await this.isMonsterAsync(item);
+      let currentMonsterCount = 0;
+      for (const i of currentTop3) {
+        if (await this.isMonsterAsync(i)) currentMonsterCount++;
+      }
 
       if (isMonster && currentMonsterCount >= 1 && !currentTop3.find(i => i.id === id)) {
         return {

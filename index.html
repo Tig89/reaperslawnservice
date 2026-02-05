@@ -16,7 +16,7 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css" integrity="sha384-9WngUUt3LKszq7XOyiuEAIJ2ZEJ99YildUh63RGLS9gwScq5zXAq1g4UZnDNl83z" crossorigin="anonymous">
+  <link rel="stylesheet" href="css/styles.css" integrity="sha384-+aNOlum9rxHwBZDULwoCVc84W2JgMCfGSb3kkAkN54CC9MvUQf8EqNCWu+W+ryzD" crossorigin="anonymous">
 </head>
 <body>
   <div id="app">
@@ -36,7 +36,7 @@
         <div class="hud-row">
           <span class="hud-item"><strong id="hud-rated">0</strong> rated</span>
           <span class="hud-item"><strong id="hud-unrated">0</strong> unrated</span>
-          <span class="hud-item hud-overdue hidden" id="hud-overdue"><strong id="hud-overdue-count">0</strong> overdue</span>
+          <button class="hud-item hud-overdue hud-clickable hidden" id="hud-overdue" title="Click to manage overdue tasks"><strong id="hud-overdue-count">0</strong> overdue</button>
         </div>
         <div class="hud-row" id="hud-urgency-row" style="display:none">
           <span class="hud-item hud-urgency-overdue" id="hud-due-overdue"><strong id="hud-due-overdue-count">0</strong> past due</span>
@@ -54,6 +54,7 @@
     <!-- Search Bar -->
     <div id="search-bar" class="search-bar">
       <input type="text" id="search-input" placeholder="Search all tasks..." maxlength="200">
+      <span id="search-count" class="search-count hidden"></span>
     </div>
 
     <!-- Navigation (scrollable) -->
@@ -324,6 +325,15 @@
               <li><strong>Swipe Right</strong> - Mark as Done</li>
               <li><strong>Swipe Left</strong> - Move to Tomorrow</li>
               <li><strong>Double Tap</strong> - Edit task</li>
+            </ul>
+
+            <h4>Keyboard Shortcuts</h4>
+            <ul class="help-list">
+              <li><strong>T/W/N/S/D</strong> - Move selected task to Today/tomorroW/Next/Someday/Done</li>
+              <li><strong>E</strong> - Edit selected task</li>
+              <li><strong>Delete/Backspace</strong> - Delete selected task (with undo)</li>
+              <li><strong>Escape</strong> - Close any open modal</li>
+              <li><strong>Enter</strong> - Confirm in modals/add task in inbox</li>
             </ul>
           </div>
         </div>
@@ -619,10 +629,23 @@
         </div>
       </div>
     </div>
+
+    <!-- Overdue Management Modal -->
+    <div id="overdue-modal" class="overlay hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <h3>Overdue Tasks</h3>
+        <p class="modal-hint">These tasks are past their scheduled date. Choose what to do:</p>
+        <ul id="overdue-list" class="overdue-task-list"></ul>
+        <div class="modal-actions">
+          <button id="overdue-reschedule-all-btn" class="btn-primary">Reschedule All to Today</button>
+          <button id="overdue-close-btn" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <script src="js/db.js" integrity="sha384-YGEpaj5E/gW0CgBO1Cg0Y2BPhDojvXbc0tmoB09nwOkb9G/6yUCzm5OUnGpSkbhP" crossorigin="anonymous"></script>
-  <script src="js/app.js" integrity="sha384-OD7pW2uKJzR9SP2Z4bocyp3wYLCOkdRI9A7ji1rFKD9N7JpSz4/Trf3G/BhS2ss9" crossorigin="anonymous"></script>
+  <script src="js/db.js" integrity="sha384-wfVDUVcaijMM+MUu4mIJWEB+47THQNhFiylPJdL8hIcNIH3XjkU9y/hyKczwEjbM" crossorigin="anonymous"></script>
+  <script src="js/app.js" integrity="sha384-32TMr8pgjvnhgwcT1+30nwxPW5cQC/Y5ANE+JYp6/RiGbOu0sTCJgxLfb4v2NMrC" crossorigin="anonymous"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
