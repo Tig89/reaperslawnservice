@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <!-- Security headers -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self';">
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
   <meta name="theme-color" content="#16213e">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -11,7 +16,7 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/styles.css" integrity="sha384-9WngUUt3LKszq7XOyiuEAIJ2ZEJ99YildUh63RGLS9gwScq5zXAq1g4UZnDNl83z" crossorigin="anonymous">
 </head>
 <body>
   <div id="app">
@@ -48,7 +53,7 @@
 
     <!-- Search Bar -->
     <div id="search-bar" class="search-bar">
-      <input type="text" id="search-input" placeholder="Search all tasks...">
+      <input type="text" id="search-input" placeholder="Search all tasks..." maxlength="200">
     </div>
 
     <!-- Navigation (scrollable) -->
@@ -63,7 +68,7 @@
         <button class="nav-btn" data-page="done">Done</button>
         <button class="nav-btn" data-page="routines">Routines</button>
         <button class="nav-btn" data-page="analytics">Stats</button>
-        <button class="nav-btn" data-page="settings">&#9881;</button>
+        <button class="nav-btn" data-page="settings" aria-label="Settings">&#9881;</button>
       </div>
     </nav>
 
@@ -73,8 +78,8 @@
       <section id="page-inbox" class="page active">
         <p class="page-hint">Capture everything here first. Process later by moving to Today, Next, or Someday.</p>
         <div class="input-area">
-          <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off">
-          <button class="voice-btn" data-target="inbox-input" title="Voice input">🎤</button>
+          <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off" maxlength="500">
+          <button class="voice-btn" data-target="inbox-input" title="Voice input" aria-label="Voice input">🎤</button>
           <button id="inbox-add-btn">+</button>
         </div>
         <ul id="inbox-list" class="item-list"></ul>
@@ -126,6 +131,13 @@
       <!-- Done Page -->
       <section id="page-done" class="page">
         <p class="page-hint">Completed tasks. Celebrate your wins!</p>
+        <div class="done-actions">
+          <button id="archive-old-btn" class="btn-secondary btn-sm">Archive 30+ days old</button>
+          <label class="search-all-toggle">
+            <input type="checkbox" id="show-archived">
+            Show archived
+          </label>
+        </div>
         <ul id="done-list" class="item-list"></ul>
       </section>
 
@@ -340,18 +352,18 @@
     <!-- Item Edit Modal -->
     <div id="edit-modal" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
       <div class="modal-content modal-large">
-        <h3>Edit Task</h3>
+        <h3 id="edit-modal-title">Edit Task</h3>
 
-        <input type="text" id="edit-text" placeholder="Task description">
+        <input type="text" id="edit-text" placeholder="Task description" maxlength="500">
 
         <div class="edit-row">
           <label>Next Action (specific step)</label>
-          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?">
+          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?" maxlength="500">
         </div>
 
         <div class="edit-row">
           <label>Notes</label>
-          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3"></textarea>
+          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3" maxlength="2000"></textarea>
         </div>
 
         <div class="edit-row">
@@ -609,8 +621,8 @@
     </div>
   </div>
 
-  <script src="js/db.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/db.js" integrity="sha384-YGEpaj5E/gW0CgBO1Cg0Y2BPhDojvXbc0tmoB09nwOkb9G/6yUCzm5OUnGpSkbhP" crossorigin="anonymous"></script>
+  <script src="js/app.js" integrity="sha384-OD7pW2uKJzR9SP2Z4bocyp3wYLCOkdRI9A7ji1rFKD9N7JpSz4/Trf3G/BhS2ss9" crossorigin="anonymous"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));

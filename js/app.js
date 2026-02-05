@@ -3,6 +3,42 @@
  * Army-style task prioritization with ACE+LMT scoring
  */
 
+// ==================== DEBUG ====================
+// Set to true to enable detailed error logging (disable in production)
+const DEBUG = false;
+
+function debugLog(level, message, data) {
+  if (!DEBUG) return;
+  const methods = { error: console.error, warn: console.warn, log: console.log };
+  const method = methods[level] || console.log;
+  if (data) {
+    method(`[BattlePlan] ${message}`, data);
+  } else {
+    method(`[BattlePlan] ${message}`);
+  }
+}
+
+// ==================== CONSTANTS ====================
+const CONSTANTS = {
+  MAX_TASK_LENGTH: 500,
+  MAX_NOTES_LENGTH: 2000,
+  MAX_SEARCH_LENGTH: 200,
+  MAX_TAG_LENGTH: 50,
+  MAX_IMPORT_ITEMS: 1000,
+  TOP3_LIMIT: 3,
+  UNDO_TIMEOUT_MS: 5000,
+  SEARCH_DEBOUNCE_MS: 300,
+  DEFAULT_SWIPE_THRESHOLD: 0.45,
+  DEFAULT_TIMER_MINUTES: 25,
+  MONSTER_THRESHOLD_MINUTES: 90,
+  NOTIFICATION_CHECK_INTERVAL_MS: 60 * 60 * 1000, // 1 hour
+  STORAGE_WARNING_PERCENT: 80,
+  VALID_STATUSES: ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'],
+  VALID_TAGS: ['Home', 'Army', 'Business', 'Other'],
+  VALID_CONFIDENCES: ['high', 'medium', 'low'],
+  VALID_RECURRENCES: ['', 'daily', 'weekly', 'monthly']
+};
+
 class BattlePlanApp {
   constructor() {
     this.currentPage = 'inbox';
@@ -12,7 +48,7 @@ class BattlePlanApp {
     this.focusTimer = null;
     this.focusTimeRemaining = 0;
     this.focusPaused = false;
-    this.timerDefault = 25;
+    this.timerDefault = CONSTANTS.DEFAULT_TIMER_MINUTES;
     this.searchQuery = '';
     this.searchTimeout = null;
 
@@ -37,13 +73,14 @@ class BattlePlanApp {
     // Swipe gesture state
     this.swipeState = null;
     this.swipeEnabled = true;
-    this.swipeThreshold = 0.45; // 45% default, configurable
+    this.swipeThreshold = CONSTANTS.DEFAULT_SWIPE_THRESHOLD;
     this.trayCloseHandler = null; // Track close handler to prevent memory leaks
 
     // Voice input state
     this.speechRecognition = null;
     this.isListening = false;
     this.voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    this.voiceStartLock = false;
 
     // Undo state
     this.lastAction = null; // { type, itemId, previousState, description }
@@ -53,6 +90,13 @@ class BattlePlanApp {
     // Notification state
     this.notificationsEnabled = localStorage.getItem('battlePlanNotifications') === 'true';
     this.lastNotificationCheck = null;
+
+    // Score cache for performance
+    this.scoreCache = new Map();
+    this.scoreCacheTime = 0;
+
+    // Archive state
+    this.showArchived = false;
 
     this.init();
   }
@@ -128,7 +172,7 @@ class BattlePlanApp {
         }
       }
     } catch (e) {
-      console.warn('Could not check storage quota:', e);
+      debugLog('warn', 'Could not check storage quota', e);
       document.getElementById('storage-usage').textContent = 'N/A';
     }
   }
@@ -178,7 +222,12 @@ class BattlePlanApp {
 
     // Search (debounced for performance)
     document.getElementById('search-input').addEventListener('input', (e) => {
-      this.searchQuery = e.target.value;
+      // Limit search query length to prevent DoS
+      const value = e.target.value;
+      this.searchQuery = value.substring(0, CONSTANTS.MAX_SEARCH_LENGTH);
+      if (value.length > CONSTANTS.MAX_SEARCH_LENGTH) {
+        e.target.value = this.searchQuery;
+      }
       // Debounce: wait 300ms after typing stops before rendering
       if (this.searchTimeout) clearTimeout(this.searchTimeout);
       this.searchTimeout = setTimeout(() => this.render(), 300);
@@ -193,6 +242,13 @@ class BattlePlanApp {
     document.getElementById('suggest-top3-btn').addEventListener('click', () => this.suggestTop3());
     document.getElementById('rebuild-top3-btn').addEventListener('click', () => this.rebuildTop3());
     document.getElementById('auto-balance-btn').addEventListener('click', () => this.autoBalance());
+
+    // Done page actions
+    document.getElementById('archive-old-btn').addEventListener('click', () => this.archiveOldTasks());
+    document.getElementById('show-archived').addEventListener('change', (e) => {
+      this.showArchived = e.target.checked;
+      this.renderByStatus('done');
+    });
 
     // Routines
     document.getElementById('routine-name-input').addEventListener('keydown', (e) => {
@@ -576,7 +632,9 @@ class BattlePlanApp {
     const sorted = this.sortByPriority(items);
 
     if (sorted.length === 0) {
-      const msg = this.searchQuery ? 'No matching items' : 'Inbox is empty. Add something above!';
+      const msg = this.searchQuery
+        ? 'No matching items. Try different keywords or check "Search all" to include done tasks.'
+        : 'Inbox is empty. Add a task above to get started!';
       list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
       return;
     }
@@ -611,7 +669,7 @@ class BattlePlanApp {
           .map(r => r.value);
         top3List.innerHTML = top3Html.join('');
       } catch (e) {
-        console.error('Error rendering Top 3:', e);
+        debugLog('error', 'Error rendering Top 3', e);
         top3List.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
       }
     }
@@ -631,7 +689,7 @@ class BattlePlanApp {
           .map(r => r.value);
         todayList.innerHTML = otherHtml.join('');
       } catch (e) {
-        console.error('Error rendering today items:', e);
+        debugLog('error', 'Error rendering today items', e);
         todayList.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
       }
     }
@@ -658,21 +716,50 @@ class BattlePlanApp {
   }
 
   async renderByStatus(status) {
-    let items = await db.getItemsByStatus(status);
+    let items;
+
+    // Special handling for done status - filter archived items
+    if (status === 'done') {
+      items = await db.getDoneItems(this.showArchived);
+    } else {
+      items = await db.getItemsByStatus(status);
+    }
+
     items = await this.getFilteredItems(items);
 
     const list = document.getElementById(`${status}-list`);
 
     if (items.length === 0) {
-      const msg = this.searchQuery ? 'No matching items' : `No ${status} items`;
+      let msg = this.searchQuery ? 'No matching items' : `No ${status} items`;
+      if (status === 'done' && !this.showArchived) {
+        msg = 'No recent completed tasks. Check "Show archived" to see older items.';
+      }
       list.innerHTML = `<li class="empty-state"><p>${msg}</p></li>`;
       return;
     }
 
-    // Sort by priority score + time sensitivity
-    const sorted = this.sortByPriority(items);
+    // Sort by priority score + time sensitivity (done items by completion date)
+    const sorted = status === 'done'
+      ? items.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+      : this.sortByPriority(items);
+
     list.innerHTML = sorted.map(item => this.renderItem(item, { showPills: true })).join('');
     this.bindItemEvents();
+  }
+
+  async archiveOldTasks() {
+    try {
+      const archived = await db.archiveDoneTasks(30);
+      if (archived > 0) {
+        this.showToast(`Archived ${archived} old task${archived > 1 ? 's' : ''}`);
+        await this.renderByStatus('done');
+      } else {
+        this.showToast('No tasks older than 30 days to archive');
+      }
+    } catch (err) {
+      debugLog('error', 'Error archiving tasks', err);
+      this.showToast('Error archiving tasks');
+    }
   }
 
   getDueUrgency(item) {
@@ -824,7 +911,7 @@ class BattlePlanApp {
         <div class="item ${statusClass} ${selectedClass} ${overdueClass} ${urgencyClass}" data-id="${item.id}">
           ${top3Number ? `<span class="top3-badge">${top3Number}</span>` : ''}
           <div class="item-header">
-            <div class="item-text">${this.escapeHtml(item.text)}</div>
+            <div class="item-text">${this.highlightSearch(item.text)}</div>
             ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
           </div>
           ${nextActionHtml}
@@ -1063,11 +1150,13 @@ class BattlePlanApp {
           this.setItemStatus(itemId, 'done');
         });
       } else {
-        // Full swipe left = Tomorrow
+        // Full swipe left = Tomorrow (with undo support)
         this.animateSwipeOut(wrapper, 'left').then(async () => {
+          await this.saveForUndo(itemId, 'Moved to Tomorrow');
           await db.setTomorrow(itemId);
           await this.render();
           await this.updateHUD();
+          this.showUndoToast('Moved to Tomorrow');
         });
       }
     }
@@ -1200,7 +1289,7 @@ class BattlePlanApp {
     };
 
     this.speechRecognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
+      debugLog('error', 'Speech recognition error', event.error);
       this.stopVoiceInput();
 
       let message = 'Voice input error';
@@ -1250,17 +1339,18 @@ class BattlePlanApp {
     try {
       this.speechRecognition.start();
     } catch (err) {
-      console.error('Failed to start speech recognition:', err);
+      debugLog('error', 'Failed to start speech recognition', err);
       this.stopVoiceInput();
       this.showToast('Failed to start voice input');
     } finally {
-      // Release lock after a short delay
-      setTimeout(() => { this.voiceStartLock = false; }, 300);
+      // Note: voiceStartLock is released in stopVoiceInput()
+      // which is called by onend handler - this prevents race conditions
     }
   }
 
   stopVoiceInput() {
     this.isListening = false;
+    this.voiceStartLock = false; // Release lock here, after speech ends
 
     // Update all voice buttons
     document.querySelectorAll('.voice-btn').forEach(btn => {
@@ -1434,14 +1524,25 @@ class BattlePlanApp {
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
       document.body.appendChild(toast);
     }
 
     let countdown = 5;
-    toast.innerHTML = `
-      <span>${message}</span>
-      <button class="undo-btn" onclick="app.undo()">Undo (${countdown}s)</button>
-    `;
+
+    // Build toast content safely (no inline handlers)
+    const messageSpan = document.createElement('span');
+    messageSpan.textContent = message;
+
+    const undoBtn = document.createElement('button');
+    undoBtn.className = 'undo-btn';
+    undoBtn.textContent = `Undo (${countdown}s)`;
+    undoBtn.addEventListener('click', () => this.undo());
+
+    toast.innerHTML = '';
+    toast.appendChild(messageSpan);
+    toast.appendChild(undoBtn);
     toast.className = 'toast toast-undo visible';
 
     // Clear previous timeout and interval
@@ -1451,9 +1552,8 @@ class BattlePlanApp {
     // Update countdown every second
     this.undoCountdownInterval = setInterval(() => {
       countdown--;
-      const btn = toast.querySelector('.undo-btn');
-      if (btn && countdown > 0) {
-        btn.textContent = `Undo (${countdown}s)`;
+      if (undoBtn && countdown > 0) {
+        undoBtn.textContent = `Undo (${countdown}s)`;
       }
     }, 1000);
 
@@ -1462,7 +1562,7 @@ class BattlePlanApp {
       if (this.undoCountdownInterval) clearInterval(this.undoCountdownInterval);
       this.hideToast();
       this.lastAction = null;
-    }, 5000);
+    }, CONSTANTS.UNDO_TIMEOUT_MS);
   }
 
   async undo() {
@@ -1592,10 +1692,21 @@ class BattlePlanApp {
     const text = input.value.trim();
     if (!text) return;
 
-    await db.addItem(text);
-    input.value = '';
-    await this.renderInbox();
-    input.focus();
+    // Validate input length
+    if (text.length > CONSTANTS.MAX_TASK_LENGTH) {
+      this.showToast(`Task too long (max ${CONSTANTS.MAX_TASK_LENGTH} chars)`);
+      return;
+    }
+
+    try {
+      await db.addItem(text);
+      input.value = '';
+      await this.renderInbox();
+      input.focus();
+    } catch (err) {
+      debugLog('error', 'Error adding task', err);
+      this.showToast('Error adding task. Storage may be full.');
+    }
   }
 
   async setItemStatus(id, status) {
@@ -2009,10 +2120,22 @@ class BattlePlanApp {
     const recurrenceValue = document.getElementById('edit-recurrence').value;
     const recurrenceDayValue = document.getElementById('edit-recurrence-day').value;
 
+    // Get and validate text length
+    let text = document.getElementById('edit-text').value.trim();
+    if (text.length > CONSTANTS.MAX_TASK_LENGTH) {
+      text = text.substring(0, CONSTANTS.MAX_TASK_LENGTH);
+    }
+
+    // Get and validate notes length
+    let notes = document.getElementById('edit-notes').value.trim() || null;
+    if (notes && notes.length > CONSTANTS.MAX_NOTES_LENGTH) {
+      notes = notes.substring(0, CONSTANTS.MAX_NOTES_LENGTH);
+    }
+
     const updates = {
-      text: document.getElementById('edit-text').value.trim(),
+      text: text,
       next_action: document.getElementById('edit-next-action').value.trim() || null,
-      notes: document.getElementById('edit-notes').value.trim() || null,
+      notes: notes,
       scheduled_for_date: document.getElementById('edit-scheduled').value || null,
       dueDate: document.getElementById('edit-due').value || null,
       waiting_on: document.getElementById('edit-waiting-on').value.trim() || null,
@@ -2060,23 +2183,51 @@ class BattlePlanApp {
   async renderSubtasksList() {
     if (!this.editingItemId) return;
 
-    const subtasks = await db.getSubtasks(this.editingItemId);
-    const list = document.getElementById('subtasks-list');
+    try {
+      const subtasks = await db.getSubtasks(this.editingItemId);
+      const list = document.getElementById('subtasks-list');
 
-    if (subtasks.length === 0) {
-      list.innerHTML = '<li class="subtask-empty">No sub-tasks yet</li>';
-      return;
+      if (subtasks.length === 0) {
+        list.innerHTML = '<li class="subtask-empty">No sub-tasks yet</li>';
+        return;
+      }
+
+      // Build subtask list without inline handlers
+      list.innerHTML = '';
+      subtasks.forEach(subtask => {
+        const li = document.createElement('li');
+        li.className = `subtask-item ${subtask.status === 'done' ? 'done' : ''}`;
+        li.dataset.id = subtask.id;
+
+        const label = document.createElement('label');
+        label.className = 'subtask-checkbox';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = subtask.status === 'done';
+        checkbox.addEventListener('change', () => this.toggleSubtask(subtask.id));
+
+        const textSpan = document.createElement('span');
+        textSpan.className = 'subtask-text';
+        textSpan.textContent = subtask.text;
+
+        label.appendChild(checkbox);
+        label.appendChild(textSpan);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'subtask-delete';
+        deleteBtn.innerHTML = '&times;';
+        deleteBtn.setAttribute('aria-label', 'Delete subtask');
+        deleteBtn.addEventListener('click', () => this.deleteSubtask(subtask.id));
+
+        li.appendChild(label);
+        li.appendChild(deleteBtn);
+        list.appendChild(li);
+      });
+    } catch (err) {
+      debugLog('error', 'Error rendering subtasks', err);
+      this.showToast('Error loading subtasks');
     }
-
-    list.innerHTML = subtasks.map(subtask => `
-      <li class="subtask-item ${subtask.status === 'done' ? 'done' : ''}" data-id="${subtask.id}">
-        <label class="subtask-checkbox">
-          <input type="checkbox" ${subtask.status === 'done' ? 'checked' : ''} onchange="app.toggleSubtask('${subtask.id}')">
-          <span class="subtask-text">${this.escapeHtml(subtask.text)}</span>
-        </label>
-        <button class="subtask-delete" onclick="app.deleteSubtask('${subtask.id}')">&times;</button>
-      </li>
-    `).join('');
   }
 
   async addSubtask() {
@@ -2086,27 +2237,53 @@ class BattlePlanApp {
     const text = input.value.trim();
     if (!text) return;
 
-    await db.addSubtask(this.editingItemId, text);
-    input.value = '';
-    await this.renderSubtasksList();
+    // Validate length
+    if (text.length > CONSTANTS.MAX_TASK_LENGTH) {
+      this.showToast(`Subtask too long (max ${CONSTANTS.MAX_TASK_LENGTH} chars)`);
+      return;
+    }
+
+    try {
+      await db.addSubtask(this.editingItemId, text);
+      input.value = '';
+      await this.renderSubtasksList();
+    } catch (err) {
+      debugLog('error', 'Error adding subtask', err);
+      this.showToast('Error adding subtask');
+    }
   }
 
   async toggleSubtask(subtaskId) {
-    const subtask = await db.getItem(subtaskId);
-    if (!subtask) return;
+    try {
+      const subtask = await db.getItem(subtaskId);
+      if (!subtask) return;
 
-    const newStatus = subtask.status === 'done' ? 'today' : 'done';
-    await db.updateItem(subtaskId, { status: newStatus });
-    await this.renderSubtasksList();
-    await this.render();
-    await this.updateHUD();
+      // Get parent item to determine proper non-done status
+      const parent = await db.getItem(subtask.parent_id);
+      const parentStatus = parent ? parent.status : 'today';
+
+      // Toggle between done and parent's status (not hardcoded 'today')
+      const newStatus = subtask.status === 'done' ? parentStatus : 'done';
+      await db.updateItem(subtaskId, { status: newStatus });
+      await this.renderSubtasksList();
+      await this.render();
+      await this.updateHUD();
+    } catch (err) {
+      debugLog('error', 'Error toggling subtask', err);
+      this.showToast('Error updating subtask');
+    }
   }
 
   async deleteSubtask(subtaskId) {
-    await db.deleteItem(subtaskId);
-    await this.renderSubtasksList();
-    await this.render();
-    await this.updateHUD();
+    try {
+      await db.deleteItem(subtaskId);
+      await this.renderSubtasksList();
+      await this.render();
+      await this.updateHUD();
+    } catch (err) {
+      debugLog('error', 'Error deleting subtask', err);
+      this.showToast('Error deleting subtask');
+    }
   }
 
   // ==================== ROUTINES ====================
@@ -2320,18 +2497,39 @@ class BattlePlanApp {
       document.getElementById('stat-avg-per-week').textContent = '0';
     }
 
-    // Stats by tag
+    // Stats by tag - build safely without innerHTML XSS
     const tagStats = {};
     doneItems.forEach(item => {
       const tag = item.tag || 'Untagged';
       tagStats[tag] = (tagStats[tag] || 0) + 1;
     });
 
-    const tagHtml = Object.entries(tagStats)
-      .sort((a, b) => b[1] - a[1])
-      .map(([tag, count]) => `<div class="tag-stat"><span>${tag}</span><span>${count}</span></div>`)
-      .join('');
-    document.getElementById('stat-by-tag').innerHTML = tagHtml || '<p class="stat-hint">No completed tasks yet</p>';
+    const tagContainer = document.getElementById('stat-by-tag');
+    tagContainer.innerHTML = '';
+
+    const sortedTags = Object.entries(tagStats).sort((a, b) => b[1] - a[1]);
+
+    if (sortedTags.length === 0) {
+      const hint = document.createElement('p');
+      hint.className = 'stat-hint';
+      hint.textContent = 'No completed tasks yet';
+      tagContainer.appendChild(hint);
+    } else {
+      sortedTags.forEach(([tag, count]) => {
+        const div = document.createElement('div');
+        div.className = 'tag-stat';
+
+        const tagSpan = document.createElement('span');
+        tagSpan.textContent = tag; // Safe - uses textContent
+
+        const countSpan = document.createElement('span');
+        countSpan.textContent = count;
+
+        div.appendChild(tagSpan);
+        div.appendChild(countSpan);
+        tagContainer.appendChild(div);
+      });
+    }
   }
 
   // ==================== FOCUS MODE ====================
@@ -2464,11 +2662,38 @@ class BattlePlanApp {
       const text = await file.text();
       const data = JSON.parse(text);
 
+      // Validate import structure
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid file format');
+      }
+
+      // Validate items array
+      const itemCount = data.items ? data.items.length : 0;
+      if (itemCount > CONSTANTS.MAX_IMPORT_ITEMS) {
+        throw new Error(`Too many items (max ${CONSTANTS.MAX_IMPORT_ITEMS})`);
+      }
+
+      // Validate each item has required fields
+      if (data.items) {
+        for (const item of data.items) {
+          if (!item.id || typeof item.text !== 'string') {
+            throw new Error('Invalid item structure');
+          }
+          // Truncate overly long text
+          if (item.text.length > CONSTANTS.MAX_TASK_LENGTH) {
+            item.text = item.text.substring(0, CONSTANTS.MAX_TASK_LENGTH);
+          }
+          // Validate status
+          if (item.status && !CONSTANTS.VALID_STATUSES.includes(item.status)) {
+            item.status = 'inbox';
+          }
+        }
+      }
+
       // Store pending data and show confirmation modal
       this.pendingImportData = data;
 
       // Show info about what will be imported
-      const itemCount = data.items ? data.items.length : 0;
       const routineCount = data.routines ? data.routines.length : 0;
       const version = data.version || 'unknown';
 
@@ -2476,7 +2701,8 @@ class BattlePlanApp {
         `File: ${file.name}\nVersion: ${version}\nItems: ${itemCount}, Routines: ${routineCount}`;
       document.getElementById('import-confirm-modal').classList.remove('hidden');
     } catch (err) {
-      alert('Error reading file: ' + err.message);
+      debugLog('error', 'File read error', err);
+      alert('Unable to read file. Please check the file format and try again.');
     }
 
     e.target.value = '';
@@ -2493,7 +2719,8 @@ class BattlePlanApp {
       await this.render();
       await this.updateHUD();
     } catch (err) {
-      alert('Error importing data: ' + err.message);
+      debugLog('error', 'Import error', err);
+      alert('Unable to import data. The file may be corrupted or incompatible.');
     }
   }
 
@@ -2606,10 +2833,22 @@ class BattlePlanApp {
   }
 
   /**
-   * Get priority score for an item.
+   * Get priority score for an item (with caching for sort performance).
    * Adds bonuses for URGENT (C=5) and rated items.
    */
   getPriorityScore(item) {
+    // Check cache (invalidate after 5 seconds)
+    const now = Date.now();
+    if (now - this.scoreCacheTime > 5000) {
+      this.scoreCache.clear();
+      this.scoreCacheTime = now;
+    }
+
+    // Return cached score if available
+    if (this.scoreCache.has(item.id)) {
+      return this.scoreCache.get(item.id);
+    }
+
     let score = 0;
 
     // Base ACE+LMT score (0-27 range)
@@ -2628,7 +2867,16 @@ class BattlePlanApp {
       score += 1;
     }
 
+    // Cache the score
+    this.scoreCache.set(item.id, score);
     return score;
+  }
+
+  /**
+   * Clear score cache (call after updates)
+   */
+  invalidateScoreCache() {
+    this.scoreCache.clear();
   }
 
   // ==================== UTILITIES ====================
@@ -2637,6 +2885,31 @@ class BattlePlanApp {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  /**
+   * Validate and sanitize text input
+   */
+  sanitizeText(text, maxLength = CONSTANTS.MAX_TASK_LENGTH) {
+    if (!text || typeof text !== 'string') return '';
+    return text.trim().substring(0, maxLength);
+  }
+
+  /**
+   * Highlight search query in text (safe - escapes HTML first)
+   */
+  highlightSearch(text) {
+    if (!this.searchQuery.trim()) {
+      return this.escapeHtml(text);
+    }
+
+    const escaped = this.escapeHtml(text);
+    const query = this.searchQuery.trim();
+    const escapedQuery = this.escapeHtml(query);
+
+    // Case-insensitive replace with mark tag
+    const regex = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return escaped.replace(regex, '<mark>$1</mark>');
   }
 }
 
