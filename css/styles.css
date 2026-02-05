@@ -528,6 +528,22 @@ body {
   margin-bottom: var(--spacing-md);
 }
 
+.done-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+}
+
+/* Search highlight */
+mark {
+  background: var(--warning);
+  color: #000;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
 .suggestion-message {
   padding: var(--spacing-sm) var(--spacing-md);
   margin-bottom: var(--spacing-md);

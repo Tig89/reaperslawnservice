@@ -782,7 +782,7 @@ class BattlePlanDB {
 
   // ==================== TASK COMPLETION ====================
 
-  async completeTask(id, actual_bucket) {
+  async completeTask(id, actual_bucket, skipRecurrence = false) {
     const item = await this.getItem(id);
     if (!item) return null;
 
@@ -791,8 +791,8 @@ class BattlePlanDB {
       await this.addCalibrationEntry(item.tag, item.estimate_bucket, actual_bucket);
     }
 
-    // Create next recurring instance if task is recurring
-    if (item.recurrence) {
+    // Create next recurring instance if task is recurring (unless skipping)
+    if (item.recurrence && !skipRecurrence) {
       await this.createNextRecurringTask(item);
     }
 
@@ -804,6 +804,40 @@ class BattlePlanDB {
       top3Date: null,
       top3Locked: false
     });
+  }
+
+  /**
+   * Archive old done tasks (older than specified days)
+   */
+  async archiveDoneTasks(olderThanDays = 30) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
+
+    const items = await this.getAllItems();
+    const toArchive = items.filter(item =>
+      item.status === 'done' &&
+      !item.archived &&
+      new Date(item.updated_at) < cutoffDate
+    );
+
+    let archived = 0;
+    for (const item of toArchive) {
+      await this.updateItem(item.id, { archived: true });
+      archived++;
+    }
+
+    return archived;
+  }
+
+  /**
+   * Get done items (exclude archived by default)
+   */
+  async getDoneItems(includeArchived = false) {
+    const items = await this.getAllItems();
+    return items.filter(item =>
+      item.status === 'done' &&
+      (includeArchived || !item.archived)
+    );
   }
 
   async createNextRecurringTask(originalItem) {
