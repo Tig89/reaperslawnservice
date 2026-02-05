@@ -2686,7 +2686,8 @@ class BattlePlanApp {
         `File: ${file.name}\nVersion: ${version}\nItems: ${itemCount}, Routines: ${routineCount}`;
       document.getElementById('import-confirm-modal').classList.remove('hidden');
     } catch (err) {
-      alert('Error reading file: ' + err.message);
+      console.error('File read error:', err);
+      alert('Unable to read file. Please check the file format and try again.');
     }
 
     e.target.value = '';
@@ -2703,7 +2704,8 @@ class BattlePlanApp {
       await this.render();
       await this.updateHUD();
     } catch (err) {
-      alert('Error importing data: ' + err.message);
+      console.error('Import error:', err);
+      alert('Unable to import data. The file may be corrupted or incompatible.');
     }
   }
 
