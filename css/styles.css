@@ -46,49 +46,71 @@
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Light theme */
+/* Light theme - improved contrast */
 [data-theme="light"] {
-  --bg-primary: #f5f5f5;
-  --bg-secondary: #ffffff;
-  --bg-card: #e8e8e8;
-  --accent: #d63031;
-  --accent-hover: #ff4757;
-  --accent-secondary: #0984e3;
-  --text-primary: #2d3436;
-  --text-secondary: #636e72;
-  --text-muted: #b2bec3;
-  --success: #00b894;
-  --warning: #fdcb6e;
-  --danger: #d63031;
-  --overdue: #d63031;
-  --urgent: #d63031;
-  --critical: #e17055;
-  --monster: #6c5ce7;
-  --leverage: #00b894;
-  --friction: #e17055;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f0f0f0;
+  --bg-card: #e0e0e0;
+  --accent: #c0392b;
+  --accent-hover: #e74c3c;
+  --accent-secondary: #2980b9;
+  --text-primary: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-muted: #7a7a7a;
+  --success: #27ae60;
+  --warning: #f39c12;
+  --danger: #c0392b;
+  --overdue: #c0392b;
+  --urgent: #c0392b;
+  --critical: #d35400;
+  --monster: #8e44ad;
+  --leverage: #27ae60;
+  --friction: #d35400;
+}
+
+/* Matrix theme - green on black like the movie */
+[data-theme="matrix"] {
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-card: #0d1a0d;
+  --accent: #00ff41;
+  --accent-hover: #00cc33;
+  --accent-secondary: #008f11;
+  --text-primary: #00ff41;
+  --text-secondary: #00cc33;
+  --text-muted: #006600;
+  --success: #00ff41;
+  --warning: #ccff00;
+  --danger: #ff0040;
+  --overdue: #ff0040;
+  --urgent: #ff0040;
+  --critical: #ff6600;
+  --monster: #00ffff;
+  --leverage: #00ff41;
+  --friction: #ffff00;
 }
 
 /* System preference auto theme */
 @media (prefers-color-scheme: light) {
   [data-theme="system"] {
-    --bg-primary: #f5f5f5;
-    --bg-secondary: #ffffff;
-    --bg-card: #e8e8e8;
-    --accent: #d63031;
-    --accent-hover: #ff4757;
-    --accent-secondary: #0984e3;
-    --text-primary: #2d3436;
-    --text-secondary: #636e72;
-    --text-muted: #b2bec3;
-    --success: #00b894;
-    --warning: #fdcb6e;
-    --danger: #d63031;
-    --overdue: #d63031;
-    --urgent: #d63031;
-    --critical: #e17055;
-    --monster: #6c5ce7;
-    --leverage: #00b894;
-    --friction: #e17055;
+    --bg-primary: #ffffff;
+    --bg-secondary: #f0f0f0;
+    --bg-card: #e0e0e0;
+    --accent: #c0392b;
+    --accent-hover: #e74c3c;
+    --accent-secondary: #2980b9;
+    --text-primary: #1a1a1a;
+    --text-secondary: #4a4a4a;
+    --text-muted: #7a7a7a;
+    --success: #27ae60;
+    --warning: #f39c12;
+    --danger: #c0392b;
+    --overdue: #c0392b;
+    --urgent: #c0392b;
+    --critical: #d35400;
+    --monster: #8e44ad;
+    --leverage: #27ae60;
+    --friction: #d35400;
   }
 }
 
@@ -1251,6 +1273,7 @@ body {
 /* Theme toggle */
 .theme-toggle {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   background: var(--bg-secondary);
   border-radius: var(--border-radius);
@@ -1258,14 +1281,16 @@ body {
 }
 
 .theme-btn {
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-sm);
   background: transparent;
   border: none;
   border-radius: calc(var(--border-radius) - 2px);
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   cursor: pointer;
   transition: all 0.2s;
+  flex: 1;
+  min-width: 60px;
 }
 
 .theme-btn.active {

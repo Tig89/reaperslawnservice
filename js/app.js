@@ -239,6 +239,7 @@ class BattlePlanApp {
     // Theme toggle
     document.getElementById('theme-dark').addEventListener('click', () => this.setTheme('dark'));
     document.getElementById('theme-light').addEventListener('click', () => this.setTheme('light'));
+    document.getElementById('theme-matrix').addEventListener('click', () => this.setTheme('matrix'));
     document.getElementById('theme-system').addEventListener('click', () => this.setTheme('system'));
 
     // Notification settings
