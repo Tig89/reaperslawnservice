@@ -377,6 +377,71 @@ body {
   display: none;
 }
 
+.hud-clickable {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.hud-clickable:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Overdue task list in modal */
+.overdue-task-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin: var(--spacing-md) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.overdue-task-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm);
+  background: var(--bg-card);
+  border-radius: var(--border-radius);
+  margin-bottom: var(--spacing-xs);
+}
+
+.overdue-task-list .task-text {
+  flex: 1;
+  margin-right: var(--spacing-sm);
+}
+
+.overdue-task-list .task-date {
+  font-size: var(--font-size-xs);
+  color: var(--overdue);
+}
+
+.overdue-task-list .task-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.overdue-task-list .task-actions button {
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.overdue-task-list .btn-today {
+  background: var(--accent);
+  color: white;
+}
+
+.overdue-task-list .btn-done {
+  background: var(--done);
+  color: white;
+}
+
 /* HUD urgency colors */
 .hud-urgency-warning { color: var(--warning); }
 .hud-urgency-warning strong { color: var(--warning); }

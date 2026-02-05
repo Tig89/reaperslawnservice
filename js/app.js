@@ -398,6 +398,11 @@ class BattlePlanApp {
       if (e.key === 'Escape') this.cancelWaiting();
     });
 
+    // Overdue Modal
+    document.getElementById('hud-overdue').addEventListener('click', () => this.showOverdueModal());
+    document.getElementById('overdue-reschedule-all-btn').addEventListener('click', () => this.rescheduleAllOverdue());
+    document.getElementById('overdue-close-btn').addEventListener('click', () => this.closeOverdueModal());
+
     // Focus Mode
     document.getElementById('focus-pause-btn').addEventListener('click', () => this.toggleFocusPause());
     document.getElementById('focus-stop-btn').addEventListener('click', () => this.stopFocus());
@@ -2876,6 +2881,80 @@ class BattlePlanApp {
   cancelWaiting() {
     this.pendingWaitingId = null;
     document.getElementById('waiting-modal').classList.add('hidden');
+  }
+
+  // ==================== OVERDUE MANAGEMENT ====================
+
+  async showOverdueModal() {
+    const allItems = await db.getAllItems();
+    const overdueItems = allItems.filter(item => db.isOverdue(item) && item.status !== 'done');
+
+    const list = document.getElementById('overdue-list');
+    if (overdueItems.length === 0) {
+      list.innerHTML = '<li>No overdue tasks!</li>';
+    } else {
+      list.innerHTML = overdueItems.map(item => `
+        <li data-id="${item.id}">
+          <div class="task-info">
+            <span class="task-text">${this.escapeHtml(item.text)}</span>
+            <span class="task-date">Scheduled: ${item.scheduled_for_date}</span>
+          </div>
+          <div class="task-actions">
+            <button class="btn-today" data-action="today">Today</button>
+            <button class="btn-done" data-action="done">Done</button>
+          </div>
+        </li>
+      `).join('');
+
+      // Bind action buttons
+      list.querySelectorAll('.task-actions button').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const li = e.target.closest('li');
+          const itemId = li.dataset.id;
+          const action = e.target.dataset.action;
+
+          this.invalidateHudCache();
+          if (action === 'today') {
+            await db.setToday(itemId);
+          } else if (action === 'done') {
+            await db.updateItem(itemId, { status: 'done', isTop3: false, top3Order: null });
+          }
+
+          // Remove from list
+          li.remove();
+
+          // Check if list is empty
+          if (list.children.length === 0) {
+            list.innerHTML = '<li>All overdue tasks handled!</li>';
+          }
+
+          await this.render();
+          await this.updateHUD();
+        });
+      });
+    }
+
+    document.getElementById('overdue-modal').classList.remove('hidden');
+  }
+
+  async rescheduleAllOverdue() {
+    const allItems = await db.getAllItems();
+    const overdueItems = allItems.filter(item => db.isOverdue(item) && item.status !== 'done');
+
+    this.invalidateHudCache();
+
+    for (const item of overdueItems) {
+      await db.setToday(item.id);
+    }
+
+    this.closeOverdueModal();
+    this.showToast(`Moved ${overdueItems.length} task${overdueItems.length !== 1 ? 's' : ''} to Today`);
+    await this.render();
+    await this.updateHUD();
+  }
+
+  closeOverdueModal() {
+    document.getElementById('overdue-modal').classList.add('hidden');
   }
 
   // ==================== SORTING ====================
