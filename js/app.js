@@ -1666,8 +1666,8 @@ class BattlePlanApp {
         break;
 
       case 'disabled':
-        // AI is disabled - add text directly as a task
-        await this.voiceAddTaskSimple(originalText);
+        // AI is disabled - use simple command parser
+        await this.executeSimpleVoiceCommand(originalText);
         break;
 
       case 'unknown':
@@ -1712,13 +1712,115 @@ class BattlePlanApp {
     this.showToast(msg);
   }
 
-  async voiceAddTaskSimple(text) {
-    // Simple mode - just add text directly as a task (no AI parsing)
-    if (!text || !text.trim()) {
-      this.showToast('No text detected');
+  async executeSimpleVoiceCommand(text) {
+    // Simple command parser (no AI) - supports basic voice commands
+    const lower = text.toLowerCase().trim();
+
+    // "add task <text>" or "add <text>"
+    if (lower.startsWith('add task ')) {
+      const taskText = text.substring(9).trim();
+      await db.addItem(taskText);
+      await this.render();
+      this.showToast(`Added: ${taskText.substring(0, 25)}...`);
+      return;
+    }
+    if (lower.startsWith('add ')) {
+      const taskText = text.substring(4).trim();
+      await db.addItem(taskText);
+      await this.render();
+      this.showToast(`Added: ${taskText.substring(0, 25)}...`);
       return;
     }
 
+    // "mark done <keyword>" / "complete <keyword>" / "finish <keyword>" / "done <keyword>"
+    const doneMatch = lower.match(/^(mark done|complete|finish|done)\s+(.+)$/);
+    if (doneMatch) {
+      const keyword = doneMatch[2].trim();
+      const item = await this.findItemByKeyword(keyword);
+      if (item) {
+        await this.setItemStatus(item.id, 'done');
+        this.showToast(`Done: ${item.text.substring(0, 20)}...`);
+      } else {
+        this.showToast(`No task found for "${keyword}"`);
+      }
+      return;
+    }
+
+    // "move <keyword> to tomorrow"
+    const tomorrowMatch = lower.match(/^move\s+(.+)\s+to tomorrow$/);
+    if (tomorrowMatch) {
+      const keyword = tomorrowMatch[1].trim();
+      const item = await this.findItemByKeyword(keyword);
+      if (item) {
+        await db.setTomorrow(item.id);
+        await this.render();
+        await this.updateHUD();
+        this.showToast(`Tomorrow: ${item.text.substring(0, 20)}...`);
+      } else {
+        this.showToast(`No task found for "${keyword}"`);
+      }
+      return;
+    }
+
+    // "move <keyword> to today"
+    const todayMatch = lower.match(/^move\s+(.+)\s+to today$/);
+    if (todayMatch) {
+      const keyword = todayMatch[1].trim();
+      const item = await this.findItemByKeyword(keyword);
+      if (item) {
+        await db.setToday(item.id);
+        await this.render();
+        await this.updateHUD();
+        this.showToast(`Today: ${item.text.substring(0, 20)}...`);
+      } else {
+        this.showToast(`No task found for "${keyword}"`);
+      }
+      return;
+    }
+
+    // Navigation: "go to <page>" / "show <page>" / "open <page>"
+    const navMatch = lower.match(/^(go to|show|open)\s+(inbox|today|tomorrow|done|routines|settings)$/);
+    if (navMatch) {
+      this.navigateTo(navMatch[2]);
+      this.showToast(`Navigated to ${navMatch[2]}`);
+      return;
+    }
+
+    // Focus timer
+    if (lower === 'start focus' || lower === 'focus mode' || lower === 'focus') {
+      this.startFocus();
+      this.showToast('Focus mode started');
+      return;
+    }
+    if (lower === 'stop focus' || lower === 'end focus' || lower === 'stop timer') {
+      this.stopFocus();
+      this.showToast('Focus mode stopped');
+      return;
+    }
+
+    // Focus with duration: "focus for 30 minutes" / "focus 45 min"
+    const focusMatch = lower.match(/^focus(?:\s+for)?\s+(\d+)\s*(?:min|minutes)?$/);
+    if (focusMatch) {
+      const mins = parseInt(focusMatch[1]);
+      this.startFocus(mins);
+      this.showToast(`Focus mode: ${mins} minutes`);
+      return;
+    }
+
+    // Run routine: "run <routine name>" / "run routine <name>"
+    const routineMatch = lower.match(/^run\s+(?:routine\s+)?(.+)$/);
+    if (routineMatch) {
+      await this.voiceRunRoutine(routineMatch[1].trim());
+      return;
+    }
+
+    // Help
+    if (lower === 'help' || lower === 'what can i say' || lower === 'commands') {
+      this.showToast('Say: "add task...", "done...", "go to today", "focus"', 'info', 5000);
+      return;
+    }
+
+    // No command matched - add as task
     await db.addItem(text.trim());
     await this.render();
     await this.updateHUD();
