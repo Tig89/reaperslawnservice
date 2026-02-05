@@ -71,23 +71,143 @@
 /* Matrix theme - green on black like the movie */
 [data-theme="matrix"] {
   --bg-primary: #000000;
-  --bg-secondary: #0a0a0a;
-  --bg-card: #0d1a0d;
+  --bg-secondary: #0a1a0a;
+  --bg-card: #102010;
   --accent: #00ff41;
-  --accent-hover: #00cc33;
-  --accent-secondary: #008f11;
-  --text-primary: #00ff41;
-  --text-secondary: #00cc33;
-  --text-muted: #006600;
+  --accent-hover: #33ff66;
+  --accent-secondary: #00cc33;
+  --text-primary: #e0ffe0;
+  --text-secondary: #80ff80;
+  --text-muted: #40aa40;
   --success: #00ff41;
-  --warning: #ccff00;
-  --danger: #ff0040;
-  --overdue: #ff0040;
-  --urgent: #ff0040;
-  --critical: #ff6600;
+  --warning: #ffff00;
+  --danger: #ff3366;
+  --overdue: #ff3366;
+  --urgent: #ff3366;
+  --critical: #ff9900;
   --monster: #00ffff;
   --leverage: #00ff41;
-  --friction: #ffff00;
+  --friction: #ffcc00;
+}
+
+/* Matrix theme specific overrides for better contrast */
+[data-theme="matrix"] .task-card,
+[data-theme="matrix"] .item {
+  border: 1px solid #00ff4133;
+  box-shadow: 0 0 8px rgba(0, 255, 65, 0.1);
+}
+
+[data-theme="matrix"] .item:hover {
+  border-color: #00ff4166;
+  box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+}
+
+[data-theme="matrix"] .badge {
+  font-weight: 700;
+  text-shadow: 0 0 3px currentColor;
+}
+
+[data-theme="matrix"] .badge-urgent {
+  background: #ff0055;
+  color: #ffffff;
+}
+
+[data-theme="matrix"] .badge-critical {
+  background: #ff6600;
+  color: #ffffff;
+}
+
+[data-theme="matrix"] .badge-leverage {
+  background: #00dd33;
+  color: #000000;
+}
+
+[data-theme="matrix"] .badge-friction {
+  background: #ffcc00;
+  color: #000000;
+}
+
+[data-theme="matrix"] .badge-monster {
+  background: #00dddd;
+  color: #000000;
+}
+
+[data-theme="matrix"] .item-text {
+  color: #ffffff;
+  text-shadow: 0 0 2px rgba(0, 255, 65, 0.3);
+}
+
+[data-theme="matrix"] .due-date,
+[data-theme="matrix"] .item-meta {
+  color: #80ff80;
+}
+
+[data-theme="matrix"] .nav-btn.active {
+  background: #00ff41;
+  color: #000000;
+  font-weight: 700;
+}
+
+[data-theme="matrix"] .btn-primary {
+  background: #00ff41;
+  color: #000000;
+  font-weight: 700;
+}
+
+[data-theme="matrix"] .btn-primary:hover {
+  background: #33ff66;
+}
+
+[data-theme="matrix"] input,
+[data-theme="matrix"] select,
+[data-theme="matrix"] textarea {
+  background: #0a150a;
+  border: 1px solid #00ff4155;
+  color: #ffffff;
+}
+
+[data-theme="matrix"] input:focus,
+[data-theme="matrix"] select:focus,
+[data-theme="matrix"] textarea:focus {
+  border-color: #00ff41;
+  box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+}
+
+[data-theme="matrix"] .modal-content {
+  border: 1px solid #00ff4144;
+  box-shadow: 0 0 30px rgba(0, 255, 65, 0.15);
+}
+
+[data-theme="matrix"] h1,
+[data-theme="matrix"] h2,
+[data-theme="matrix"] h3 {
+  color: #00ff41;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.4);
+}
+
+[data-theme="matrix"] .hud {
+  background: rgba(0, 30, 0, 0.5);
+}
+
+[data-theme="matrix"] .item-score {
+  background: rgba(0, 255, 65, 0.2);
+  color: #00ff41;
+}
+
+[data-theme="matrix"] .item-bucket {
+  background: rgba(0, 255, 65, 0.15);
+  color: #66ff66;
+}
+
+[data-theme="matrix"] .tag {
+  background: #00cc33;
+  color: #000000;
+}
+
+[data-theme="matrix"] .settings-section,
+[data-theme="matrix"] .analytics-card {
+  background: #102010;
+  border: 1px solid #00ff4122;
 }
 
 /* System preference auto theme */
