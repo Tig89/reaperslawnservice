@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <!-- Security headers -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self';">
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
   <meta name="theme-color" content="#16213e">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -48,7 +53,7 @@
 
     <!-- Search Bar -->
     <div id="search-bar" class="search-bar">
-      <input type="text" id="search-input" placeholder="Search all tasks...">
+      <input type="text" id="search-input" placeholder="Search all tasks..." maxlength="200">
     </div>
 
     <!-- Navigation (scrollable) -->
@@ -73,7 +78,7 @@
       <section id="page-inbox" class="page active">
         <p class="page-hint">Capture everything here first. Process later by moving to Today, Next, or Someday.</p>
         <div class="input-area">
-          <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off">
+          <input type="text" id="inbox-input" placeholder="Capture a task..." autocomplete="off" maxlength="500">
           <button class="voice-btn" data-target="inbox-input" title="Voice input" aria-label="Voice input">🎤</button>
           <button id="inbox-add-btn">+</button>
         </div>
@@ -349,16 +354,16 @@
       <div class="modal-content modal-large">
         <h3 id="edit-modal-title">Edit Task</h3>
 
-        <input type="text" id="edit-text" placeholder="Task description">
+        <input type="text" id="edit-text" placeholder="Task description" maxlength="500">
 
         <div class="edit-row">
           <label>Next Action (specific step)</label>
-          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?">
+          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?" maxlength="500">
         </div>
 
         <div class="edit-row">
           <label>Notes</label>
-          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3"></textarea>
+          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3" maxlength="2000"></textarea>
         </div>
 
         <div class="edit-row">

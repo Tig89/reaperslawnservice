@@ -1138,6 +1138,113 @@ class BattlePlanDB {
     };
   }
 
+  // Whitelist of allowed item fields (prevents prototype pollution)
+  static ALLOWED_ITEM_FIELDS = new Set([
+    'id', 'text', 'status', 'tag', 'next_action', 'notes',
+    'A', 'C', 'E', 'L', 'M', 'T',
+    'estimate_bucket', 'confidence', 'actual_bucket',
+    'isTop3', 'top3Order', 'top3Date', 'top3Locked',
+    'scheduled_for_date', 'dueDate',
+    'recurrence', 'recurrence_day',
+    'waiting_on', 'parent_id', 'archived',
+    'created_at', 'updated_at', 'created'
+  ]);
+
+  static ALLOWED_ROUTINE_FIELDS = new Set([
+    'id', 'name', 'items', 'created_at', 'updated_at'
+  ]);
+
+  static VALID_STATUSES = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'];
+  static VALID_CONFIDENCES = ['high', 'medium', 'low', null];
+  static VALID_RECURRENCES = ['', 'daily', 'weekly', 'monthly', null];
+
+  /**
+   * Safely copy only whitelisted fields from an object (prevents prototype pollution)
+   */
+  sanitizeItem(item) {
+    const sanitized = {};
+    for (const key of Object.keys(item)) {
+      if (BattlePlanDB.ALLOWED_ITEM_FIELDS.has(key)) {
+        sanitized[key] = item[key];
+      }
+    }
+    return sanitized;
+  }
+
+  sanitizeRoutine(routine) {
+    const sanitized = {};
+    for (const key of Object.keys(routine)) {
+      if (BattlePlanDB.ALLOWED_ROUTINE_FIELDS.has(key)) {
+        sanitized[key] = routine[key];
+      }
+    }
+    return sanitized;
+  }
+
+  /**
+   * Validate item fields have correct types
+   */
+  validateItemTypes(item) {
+    // Validate status
+    if (item.status && !BattlePlanDB.VALID_STATUSES.includes(item.status)) {
+      item.status = 'inbox';
+    }
+    // Validate confidence
+    if (item.confidence && !BattlePlanDB.VALID_CONFIDENCES.includes(item.confidence)) {
+      item.confidence = null;
+    }
+    // Validate recurrence
+    if (item.recurrence && !BattlePlanDB.VALID_RECURRENCES.includes(item.recurrence)) {
+      item.recurrence = null;
+    }
+    // Validate ACE scores (1-5)
+    for (const field of ['A', 'C', 'E']) {
+      if (item[field] !== null && item[field] !== undefined) {
+        const val = parseInt(item[field]);
+        if (isNaN(val) || val < 1 || val > 5) {
+          item[field] = null;
+        } else {
+          item[field] = val;
+        }
+      }
+    }
+    // Validate LMT scores (0-2)
+    for (const field of ['L', 'M', 'T']) {
+      if (item[field] !== null && item[field] !== undefined) {
+        const val = parseInt(item[field]);
+        if (isNaN(val) || val < 0 || val > 2) {
+          item[field] = null;
+        } else {
+          item[field] = val;
+        }
+      }
+    }
+    // Validate estimate_bucket
+    if (item.estimate_bucket !== null && item.estimate_bucket !== undefined) {
+      const val = parseInt(item.estimate_bucket);
+      if (isNaN(val) || val < 0) {
+        item.estimate_bucket = null;
+      } else {
+        item.estimate_bucket = val;
+      }
+    }
+    // Validate recurrence_day (0-6 for weekly, 1-31 for monthly)
+    if (item.recurrence_day !== null && item.recurrence_day !== undefined) {
+      const val = parseInt(item.recurrence_day);
+      if (isNaN(val) || val < 0 || val > 31) {
+        item.recurrence_day = null;
+      } else {
+        item.recurrence_day = val;
+      }
+    }
+    // Validate booleans
+    item.isTop3 = !!item.isTop3;
+    item.top3Locked = !!item.top3Locked;
+    item.archived = !!item.archived;
+
+    return item;
+  }
+
   async importData(data, skipConfirm = false) {
     await this.ready;
 
@@ -1165,8 +1272,12 @@ class BattlePlanDB {
     await clearStore('settings');
     await clearStore('calibration_history');
 
-    // Import items with defaults for new fields
+    // Import items with whitelist validation (prevents prototype pollution)
     for (const item of (data.items || [])) {
+      // Sanitize: only copy whitelisted fields
+      const sanitized = this.sanitizeItem(item);
+
+      // Apply defaults
       const itemWithDefaults = {
         A: null, C: null, E: null, L: null, M: null, T: null,
         estimate_bucket: null, confidence: null, actual_bucket: null,
@@ -1174,10 +1285,15 @@ class BattlePlanDB {
         scheduled_for_date: null,
         top3Date: null,
         top3Locked: false,
-        created_at: item.created || new Date().toISOString(),
+        archived: false,
+        created_at: sanitized.created || new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        ...item
+        ...sanitized
       };
+
+      // Validate types
+      this.validateItemTypes(itemWithDefaults);
+
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('items', 'readwrite');
         const store = tx.objectStore('items');
@@ -1187,12 +1303,27 @@ class BattlePlanDB {
       });
     }
 
-    // Import routines
+    // Import routines with whitelist validation
     for (const routine of (data.routines || [])) {
+      // Sanitize: only copy whitelisted fields
+      const sanitized = this.sanitizeRoutine(routine);
+
+      // Validate routine items is an array of strings
+      if (sanitized.items && Array.isArray(sanitized.items)) {
+        sanitized.items = sanitized.items.filter(item => typeof item === 'string').slice(0, 100);
+      } else {
+        sanitized.items = [];
+      }
+
+      // Validate name is a string
+      if (typeof sanitized.name !== 'string') {
+        sanitized.name = 'Imported Routine';
+      }
+
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('routines', 'readwrite');
         const store = tx.objectStore('routines');
-        const request = store.add(routine);
+        const request = store.add(sanitized);
         request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
       });
@@ -1271,9 +1402,7 @@ class BattlePlanDB {
       sampleSortOrder: sorted
     };
 
-    console.log('=== Battle Plan Diagnostics ===');
-    console.log(JSON.stringify(diagnostics, null, 2));
-
+    // Return diagnostics without logging sensitive data to console
     return diagnostics;
   }
 
@@ -1304,9 +1433,10 @@ class BattlePlanDB {
       }
 
       localStorage.setItem('battlePlanAutoBackups', JSON.stringify(backups));
-      console.log('Auto-backup saved:', new Date().toLocaleTimeString());
+      // Auto-backup completed silently
     } catch (e) {
-      console.error('Auto-backup failed:', e);
+      // Log only generic error without exposing data
+      console.warn('Auto-backup failed');
     }
   }
 

@@ -7,6 +7,7 @@
 const CONSTANTS = {
   MAX_TASK_LENGTH: 500,
   MAX_NOTES_LENGTH: 2000,
+  MAX_SEARCH_LENGTH: 200,
   MAX_TAG_LENGTH: 50,
   MAX_IMPORT_ITEMS: 1000,
   TOP3_LIMIT: 3,
@@ -206,7 +207,12 @@ class BattlePlanApp {
 
     // Search (debounced for performance)
     document.getElementById('search-input').addEventListener('input', (e) => {
-      this.searchQuery = e.target.value;
+      // Limit search query length to prevent DoS
+      const value = e.target.value;
+      this.searchQuery = value.substring(0, CONSTANTS.MAX_SEARCH_LENGTH);
+      if (value.length > CONSTANTS.MAX_SEARCH_LENGTH) {
+        e.target.value = this.searchQuery;
+      }
       // Debounce: wait 300ms after typing stops before rendering
       if (this.searchTimeout) clearTimeout(this.searchTimeout);
       this.searchTimeout = setTimeout(() => this.render(), 300);
@@ -2099,10 +2105,22 @@ class BattlePlanApp {
     const recurrenceValue = document.getElementById('edit-recurrence').value;
     const recurrenceDayValue = document.getElementById('edit-recurrence-day').value;
 
+    // Get and validate text length
+    let text = document.getElementById('edit-text').value.trim();
+    if (text.length > CONSTANTS.MAX_TASK_LENGTH) {
+      text = text.substring(0, CONSTANTS.MAX_TASK_LENGTH);
+    }
+
+    // Get and validate notes length
+    let notes = document.getElementById('edit-notes').value.trim() || null;
+    if (notes && notes.length > CONSTANTS.MAX_NOTES_LENGTH) {
+      notes = notes.substring(0, CONSTANTS.MAX_NOTES_LENGTH);
+    }
+
     const updates = {
-      text: document.getElementById('edit-text').value.trim(),
+      text: text,
       next_action: document.getElementById('edit-next-action').value.trim() || null,
-      notes: document.getElementById('edit-notes').value.trim() || null,
+      notes: notes,
       scheduled_for_date: document.getElementById('edit-scheduled').value || null,
       dueDate: document.getElementById('edit-due').value || null,
       waiting_on: document.getElementById('edit-waiting-on').value.trim() || null,
