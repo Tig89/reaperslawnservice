@@ -2175,3 +2175,332 @@ mark {
   background: var(--success);
   color: var(--bg-primary);
 }
+
+/* ==================== AI VOICE ASSISTANT ==================== */
+.ai-assistant-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  border: none;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.ai-assistant-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.ai-assistant-btn:active {
+  transform: scale(0.95);
+}
+
+.ai-assistant-btn.active {
+  background: linear-gradient(135deg, #8b5cf6, var(--accent));
+}
+
+.ai-assistant-btn .ai-icon {
+  font-weight: 700;
+  font-size: 16px;
+  color: white;
+  letter-spacing: -1px;
+}
+
+/* AI Assistant Panel */
+.ai-assistant-panel {
+  position: fixed;
+  bottom: 90px;
+  right: 20px;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  max-height: 60vh;
+  background: var(--bg-primary);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.ai-assistant-panel.hidden {
+  display: none;
+}
+
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(0, 212, 170, 0.1));
+}
+
+.ai-title {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.ai-mode-badge {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ai-mode-badge.online {
+  background: var(--accent);
+  color: white;
+}
+
+.ai-mode-badge.offline {
+  background: var(--warning);
+  color: var(--bg-primary);
+}
+
+.ai-close-btn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.ai-close-btn:hover {
+  color: var(--text-primary);
+}
+
+.ai-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+}
+
+.ai-response {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.ai-response em {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ai-hint {
+  margin-bottom: var(--spacing-sm);
+}
+
+.ai-examples {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.ai-examples li {
+  padding: var(--spacing-xs) 0;
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+}
+
+.ai-examples li::before {
+  content: '"';
+  color: var(--text-muted);
+}
+
+.ai-examples li::after {
+  content: '"';
+  color: var(--text-muted);
+}
+
+.ai-panel-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ai-mic-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent);
+  border-radius: var(--border-radius);
+  color: var(--accent);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-mic-btn:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.ai-mic-btn.listening {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+  animation: pulse-listening 1.5s infinite;
+}
+
+.ai-mic-btn.processing {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: var(--bg-primary);
+}
+
+.ai-mic-btn .mic-icon {
+  font-size: 20px;
+}
+
+@keyframes pulse-listening {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+}
+
+.ai-stop-speech-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--text-muted);
+  border: none;
+  border-radius: var(--border-radius);
+  color: var(--bg-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-stop-speech-btn:hover {
+  background: var(--danger);
+}
+
+.ai-stop-speech-btn.hidden {
+  display: none;
+}
+
+/* AI Setup UI */
+.ai-setup {
+  font-size: var(--font-size-sm);
+}
+
+.ai-setup-steps {
+  padding-left: var(--spacing-lg);
+  margin: var(--spacing-sm) 0;
+  color: var(--text-secondary);
+}
+
+.ai-setup-steps li {
+  padding: var(--spacing-xs) 0;
+}
+
+.ai-setup-steps a {
+  color: var(--accent);
+}
+
+.ai-key-input-wrapper {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0;
+}
+
+.ai-key-input {
+  flex: 1;
+  padding: var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: monospace;
+}
+
+.ai-key-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ai-save-key-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--border-radius);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-save-key-btn:hover {
+  opacity: 0.9;
+}
+
+.ai-key-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ai-mic-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-mic-btn:disabled:hover {
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+
+.ai-setup-hint {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ai-setup-hint a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Mobile adjustments */
+@media (max-width: 480px) {
+  .ai-assistant-btn {
+    bottom: 15px;
+    right: 15px;
+    width: 50px;
+    height: 50px;
+  }
+
+  .ai-assistant-panel {
+    bottom: 75px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-height: 50vh;
+  }
+}

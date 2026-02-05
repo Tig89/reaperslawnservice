@@ -3117,3 +3117,8 @@ class BattlePlanApp {
 
 // Initialize app
 const app = new BattlePlanApp();
+
+// Initialize AI Voice Assistant (loads after app)
+if (window.VoiceAssistant) {
+  app.voiceAssistant = new VoiceAssistant(app);
+}
