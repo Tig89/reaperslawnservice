@@ -1497,8 +1497,7 @@ class BattlePlanDB {
       await this.setSetting('_autoBackups', backups);
       // Auto-backup completed silently
     } catch (e) {
-      // Log only generic error without exposing data
-      console.warn('Auto-backup failed');
+      // Silently fail - auto-backup is non-critical
     }
   }
 

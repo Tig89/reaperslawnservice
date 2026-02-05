@@ -16,7 +16,7 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/styles.css" integrity="sha384-9WngUUt3LKszq7XOyiuEAIJ2ZEJ99YildUh63RGLS9gwScq5zXAq1g4UZnDNl83z" crossorigin="anonymous">
 </head>
 <body>
   <div id="app">
@@ -621,8 +621,8 @@
     </div>
   </div>
 
-  <script src="js/db.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/db.js" integrity="sha384-YGEpaj5E/gW0CgBO1Cg0Y2BPhDojvXbc0tmoB09nwOkb9G/6yUCzm5OUnGpSkbhP" crossorigin="anonymous"></script>
+  <script src="js/app.js" integrity="sha384-OD7pW2uKJzR9SP2Z4bocyp3wYLCOkdRI9A7ji1rFKD9N7JpSz4/Trf3G/BhS2ss9" crossorigin="anonymous"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));

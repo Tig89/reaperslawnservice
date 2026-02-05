@@ -3,6 +3,21 @@
  * Army-style task prioritization with ACE+LMT scoring
  */
 
+// ==================== DEBUG ====================
+// Set to true to enable detailed error logging (disable in production)
+const DEBUG = false;
+
+function debugLog(level, message, data) {
+  if (!DEBUG) return;
+  const methods = { error: console.error, warn: console.warn, log: console.log };
+  const method = methods[level] || console.log;
+  if (data) {
+    method(`[BattlePlan] ${message}`, data);
+  } else {
+    method(`[BattlePlan] ${message}`);
+  }
+}
+
 // ==================== CONSTANTS ====================
 const CONSTANTS = {
   MAX_TASK_LENGTH: 500,
@@ -157,7 +172,7 @@ class BattlePlanApp {
         }
       }
     } catch (e) {
-      console.warn('Could not check storage quota:', e);
+      debugLog('warn', 'Could not check storage quota', e);
       document.getElementById('storage-usage').textContent = 'N/A';
     }
   }
@@ -654,7 +669,7 @@ class BattlePlanApp {
           .map(r => r.value);
         top3List.innerHTML = top3Html.join('');
       } catch (e) {
-        console.error('Error rendering Top 3:', e);
+        debugLog('error', 'Error rendering Top 3', e);
         top3List.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
       }
     }
@@ -674,7 +689,7 @@ class BattlePlanApp {
           .map(r => r.value);
         todayList.innerHTML = otherHtml.join('');
       } catch (e) {
-        console.error('Error rendering today items:', e);
+        debugLog('error', 'Error rendering today items', e);
         todayList.innerHTML = '<li class="empty-state"><p>Error loading items</p></li>';
       }
     }
@@ -742,7 +757,7 @@ class BattlePlanApp {
         this.showToast('No tasks older than 30 days to archive');
       }
     } catch (err) {
-      console.error('Error archiving tasks:', err);
+      debugLog('error', 'Error archiving tasks', err);
       this.showToast('Error archiving tasks');
     }
   }
@@ -1274,7 +1289,7 @@ class BattlePlanApp {
     };
 
     this.speechRecognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
+      debugLog('error', 'Speech recognition error', event.error);
       this.stopVoiceInput();
 
       let message = 'Voice input error';
@@ -1324,7 +1339,7 @@ class BattlePlanApp {
     try {
       this.speechRecognition.start();
     } catch (err) {
-      console.error('Failed to start speech recognition:', err);
+      debugLog('error', 'Failed to start speech recognition', err);
       this.stopVoiceInput();
       this.showToast('Failed to start voice input');
     } finally {
@@ -1689,7 +1704,7 @@ class BattlePlanApp {
       await this.renderInbox();
       input.focus();
     } catch (err) {
-      console.error('Error adding task:', err);
+      debugLog('error', 'Error adding task', err);
       this.showToast('Error adding task. Storage may be full.');
     }
   }
@@ -2210,7 +2225,7 @@ class BattlePlanApp {
         list.appendChild(li);
       });
     } catch (err) {
-      console.error('Error rendering subtasks:', err);
+      debugLog('error', 'Error rendering subtasks', err);
       this.showToast('Error loading subtasks');
     }
   }
@@ -2233,7 +2248,7 @@ class BattlePlanApp {
       input.value = '';
       await this.renderSubtasksList();
     } catch (err) {
-      console.error('Error adding subtask:', err);
+      debugLog('error', 'Error adding subtask', err);
       this.showToast('Error adding subtask');
     }
   }
@@ -2254,7 +2269,7 @@ class BattlePlanApp {
       await this.render();
       await this.updateHUD();
     } catch (err) {
-      console.error('Error toggling subtask:', err);
+      debugLog('error', 'Error toggling subtask', err);
       this.showToast('Error updating subtask');
     }
   }
@@ -2266,7 +2281,7 @@ class BattlePlanApp {
       await this.render();
       await this.updateHUD();
     } catch (err) {
-      console.error('Error deleting subtask:', err);
+      debugLog('error', 'Error deleting subtask', err);
       this.showToast('Error deleting subtask');
     }
   }
@@ -2686,7 +2701,7 @@ class BattlePlanApp {
         `File: ${file.name}\nVersion: ${version}\nItems: ${itemCount}, Routines: ${routineCount}`;
       document.getElementById('import-confirm-modal').classList.remove('hidden');
     } catch (err) {
-      console.error('File read error:', err);
+      debugLog('error', 'File read error', err);
       alert('Unable to read file. Please check the file format and try again.');
     }
 
@@ -2704,7 +2719,7 @@ class BattlePlanApp {
       await this.render();
       await this.updateHUD();
     } catch (err) {
-      console.error('Import error:', err);
+      debugLog('error', 'Import error', err);
       alert('Unable to import data. The file may be corrupted or incompatible.');
     }
   }
