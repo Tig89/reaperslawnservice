@@ -2241,7 +2241,7 @@ mark {
 .ai-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--spacing-sm);
   padding: var(--spacing-md);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(0, 212, 170, 0.1));
@@ -2253,7 +2253,27 @@ mark {
   color: var(--text-primary);
 }
 
+.ai-mode-badge {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ai-mode-badge.online {
+  background: var(--accent);
+  color: white;
+}
+
+.ai-mode-badge.offline {
+  background: var(--warning);
+  color: var(--bg-primary);
+}
+
 .ai-close-btn {
+  margin-left: auto;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -2453,6 +2473,18 @@ mark {
 .ai-mic-btn:disabled:hover {
   background: var(--bg-secondary);
   color: var(--accent);
+}
+
+.ai-setup-hint {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ai-setup-hint a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /* Mobile adjustments */

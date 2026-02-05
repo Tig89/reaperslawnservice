@@ -24,7 +24,15 @@ class VoiceAssistant {
     this.conversationHistory = [];
     this.maxHistoryLength = 4; // Keep last 4 exchanges for context
 
+    // Offline mode
+    this.cachedRecommendation = localStorage.getItem('aiLastRecommendation') || null;
+
     this.init();
+  }
+
+  // Check if we can use AI (online + has key)
+  canUseAI() {
+    return navigator.onLine && this.apiKey;
   }
 
   init() {
@@ -78,17 +86,18 @@ class VoiceAssistant {
     panel.innerHTML = `
       <div class="ai-panel-header">
         <span class="ai-title">AI Assistant</span>
+        <span id="ai-mode-badge" class="ai-mode-badge ${this.canUseAI() ? 'online' : 'offline'}">${this.canUseAI() ? 'AI' : 'Offline'}</span>
         <button class="ai-close-btn" aria-label="Close">&times;</button>
       </div>
       <div class="ai-panel-content">
         <div id="ai-response" class="ai-response">
-          ${this.apiKey ? this.getHelpContent() : this.getSetupContent()}
+          ${this.getHelpContent()}
         </div>
       </div>
       <div class="ai-panel-actions">
-        <button id="ai-mic-btn" class="ai-mic-btn" aria-label="Start voice input" ${!this.apiKey ? 'disabled' : ''}>
+        <button id="ai-mic-btn" class="ai-mic-btn" aria-label="Start voice input">
           <span class="mic-icon">🎤</span>
-          <span class="mic-text">${this.apiKey ? 'Tap to speak' : 'API key required'}</span>
+          <span class="mic-text">Tap to speak</span>
         </button>
         <button id="ai-stop-speech-btn" class="ai-stop-speech-btn hidden" aria-label="Stop speaking">
           Stop
@@ -96,20 +105,48 @@ class VoiceAssistant {
       </div>
     `;
     document.body.appendChild(panel);
+
+    // Listen for online/offline changes
+    window.addEventListener('online', () => this.updateModeIndicator());
+    window.addEventListener('offline', () => this.updateModeIndicator());
+  }
+
+  updateModeIndicator() {
+    const badge = document.getElementById('ai-mode-badge');
+    if (badge) {
+      const canAI = this.canUseAI();
+      badge.textContent = canAI ? 'AI' : 'Offline';
+      badge.className = `ai-mode-badge ${canAI ? 'online' : 'offline'}`;
+    }
   }
 
   getHelpContent() {
-    return `
-      <p class="ai-hint">Tap the mic and ask me anything about your tasks, or give me commands like:</p>
+    const offlineCommands = `
+      <p class="ai-hint"><strong>Voice Commands</strong> (work offline):</p>
       <ul class="ai-examples">
         <li>"Add task buy groceries"</li>
-        <li>"What should I work on next?"</li>
-        <li>"Why is this task ranked first?"</li>
+        <li>"Complete the phone call task"</li>
         <li>"Move laundry to tomorrow"</li>
-        <li>"What's in my waiting list?"</li>
-        <li>"I have 30 minutes, what can I do?"</li>
+        <li>"Delete the old task"</li>
+        <li>"Go to today" / "Show inbox"</li>
+        <li>"Start focus mode"</li>
+        <li>"What's next?" (uses cached suggestion)</li>
       </ul>
     `;
+
+    const aiQueries = this.apiKey ? `
+      <p class="ai-hint"><strong>AI Queries</strong> (requires internet):</p>
+      <ul class="ai-examples">
+        <li>"Why is this task ranked first?"</li>
+        <li>"I have 30 minutes, what can I do?"</li>
+        <li>"What's blocking my progress?"</li>
+        <li>"Summarize my waiting list"</li>
+      </ul>
+    ` : `
+      <p class="ai-hint ai-setup-hint">Add a <a href="#" id="ai-setup-link">Groq API key</a> to unlock AI-powered questions and smart suggestions.</p>
+    `;
+
+    return offlineCommands + aiQueries;
   }
 
   getSetupContent() {
@@ -142,11 +179,8 @@ class VoiceAssistant {
       this.closePanel();
     });
 
-    // Mic button
+    // Mic button - always enabled (offline commands work without API key)
     document.getElementById('ai-mic-btn').addEventListener('click', () => {
-      if (!this.apiKey) {
-        return; // Disabled without key
-      }
       if (this.isListening) {
         this.stopListening();
       } else {
@@ -159,22 +193,27 @@ class VoiceAssistant {
       this.stopSpeaking();
     });
 
-    // Save API key button (if present)
-    const saveKeyBtn = document.getElementById('ai-save-key-btn');
-    if (saveKeyBtn) {
-      saveKeyBtn.addEventListener('click', () => this.saveApiKey());
-    }
+    // Setup link (shown when no API key)
+    document.addEventListener('click', (e) => {
+      if (e.target.id === 'ai-setup-link') {
+        e.preventDefault();
+        this.showResponse(this.getSetupContent());
+      }
+    });
 
-    // Allow Enter to save key
-    const keyInput = document.getElementById('ai-api-key-input');
-    if (keyInput) {
-      keyInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') this.saveApiKey();
-      });
-    }
+    // Save API key button (delegated)
+    document.addEventListener('click', (e) => {
+      if (e.target.id === 'ai-save-key-btn') {
+        this.saveApiKey();
+      }
+    });
 
-    // Close on escape
+    // Allow Enter to save key (delegated)
     document.addEventListener('keydown', (e) => {
+      if (e.target.id === 'ai-api-key-input' && e.key === 'Enter') {
+        this.saveApiKey();
+      }
+      // Close on escape
       if (e.key === 'Escape' && !document.getElementById('ai-assistant-panel').classList.contains('hidden')) {
         this.closePanel();
       }
@@ -199,13 +238,12 @@ class VoiceAssistant {
     localStorage.setItem('groqApiKey', key);
     this.apiKey = key;
 
-    // Update UI
-    const micBtn = document.getElementById('ai-mic-btn');
-    micBtn.disabled = false;
-    micBtn.querySelector('.mic-text').textContent = 'Tap to speak';
+    // Update mode indicator
+    this.updateModeIndicator();
 
+    // Show updated help content
     this.showResponse(this.getHelpContent());
-    this.app.showToast('API key saved! AI assistant is ready.');
+    this.app.showToast('API key saved! AI features unlocked.');
   }
 
   togglePanel() {
@@ -262,7 +300,7 @@ class VoiceAssistant {
   }
 
   async handleVoiceInput(transcript) {
-    this.showResponse(`<em>You said: "${transcript}"</em><br><br>Thinking...`);
+    this.showResponse(`<em>You said: "${transcript}"</em><br><br>Processing...`);
     this.isProcessing = true;
 
     const micBtn = document.getElementById('ai-mic-btn');
@@ -270,10 +308,31 @@ class VoiceAssistant {
     micBtn.querySelector('.mic-text').textContent = 'Processing...';
 
     try {
-      const response = await this.processWithLLM(transcript);
-      await this.handleLLMResponse(response, transcript);
+      // Try offline command parsing first
+      const offlineResult = await this.tryOfflineCommand(transcript);
+
+      if (offlineResult.handled) {
+        // Command was handled offline
+        this.showResponse(offlineResult.response);
+        this.speak(offlineResult.response);
+      } else if (this.canUseAI()) {
+        // Fall back to AI for complex queries
+        this.showResponse(`<em>You said: "${transcript}"</em><br><br>Asking AI...`);
+        const response = await this.processWithLLM(transcript);
+        await this.handleLLMResponse(response, transcript);
+      } else {
+        // Offline and not a recognized command
+        this.showResponse(`I didn't understand that command. Try saying:<br><br>
+          • "Add task [description]"<br>
+          • "Complete [task name]"<br>
+          • "Move [task] to tomorrow"<br>
+          • "Go to today"<br>
+          • "Start focus"<br><br>
+          <em>For smart questions, connect to internet and add an API key.</em>`);
+        this.speak("I didn't understand that command. Try add task, complete, move to tomorrow, or go to today.");
+      }
     } catch (error) {
-      console.error('LLM Error:', error);
+      console.error('Voice processing error:', error);
       this.showResponse('Sorry, I had trouble processing that. Please try again.');
       this.speak('Sorry, I had trouble processing that.');
     } finally {
@@ -281,6 +340,131 @@ class VoiceAssistant {
       micBtn.classList.remove('processing');
       micBtn.querySelector('.mic-text').textContent = 'Tap to speak';
     }
+  }
+
+  // Offline command parsing - works without internet
+  async tryOfflineCommand(text) {
+    const lower = text.toLowerCase().trim();
+
+    // === ADD TASK ===
+    // "add task X", "add X to inbox/today/tomorrow"
+    let addMatch = lower.match(/^add\s+(?:task\s+)?(.+?)(?:\s+to\s+(inbox|today|tomorrow|next|someday))?$/i);
+    if (addMatch) {
+      const taskText = addMatch[1].trim();
+      const destination = addMatch[2] || 'inbox';
+      const item = await db.addItem(taskText);
+
+      if (destination !== 'inbox') {
+        if (destination === 'today') await db.setToday(item.id);
+        else if (destination === 'tomorrow') await db.setTomorrow(item.id);
+        else await db.updateItem(item.id, { status: destination });
+      }
+
+      await this.app.render();
+      await this.app.updateHUD();
+      return { handled: true, response: `Added "${taskText}" to ${destination}` };
+    }
+
+    // === COMPLETE TASK ===
+    // "complete X", "mark X done", "finish X", "done with X"
+    const doneMatch = lower.match(/^(?:complete|finish|mark\s+done|done\s+with|mark\s+.+\s+done)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i);
+    if (doneMatch) {
+      const keyword = doneMatch[1].replace(/\s+task$/, '').trim();
+      const item = await this.app.findItemByKeyword(keyword);
+      if (item) {
+        await this.app.setItemStatus(item.id, 'done');
+        return { handled: true, response: `Completed: ${item.text}` };
+      }
+      return { handled: true, response: `Couldn't find a task matching "${keyword}"` };
+    }
+
+    // === MOVE TASK ===
+    // "move X to tomorrow/today/next/waiting/someday"
+    const moveMatch = lower.match(/^move\s+(?:the\s+)?(.+?)\s+to\s+(today|tomorrow|next|waiting|someday)$/i);
+    if (moveMatch) {
+      const keyword = moveMatch[1].replace(/\s+task$/, '').trim();
+      const destination = moveMatch[2];
+      const item = await this.app.findItemByKeyword(keyword);
+      if (item) {
+        if (destination === 'today') await db.setToday(item.id);
+        else if (destination === 'tomorrow') await db.setTomorrow(item.id);
+        else await db.updateItem(item.id, { status: destination });
+        await this.app.render();
+        await this.app.updateHUD();
+        return { handled: true, response: `Moved "${item.text}" to ${destination}` };
+      }
+      return { handled: true, response: `Couldn't find a task matching "${keyword}"` };
+    }
+
+    // === DELETE TASK ===
+    // "delete X", "remove X"
+    const deleteMatch = lower.match(/^(?:delete|remove)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i);
+    if (deleteMatch) {
+      const keyword = deleteMatch[1].trim();
+      const item = await this.app.findItemByKeyword(keyword);
+      if (item) {
+        await this.app.saveDeleteForUndo(item.id, `Deleted: ${item.text}`);
+        await db.deleteItem(item.id);
+        await this.app.render();
+        await this.app.updateHUD();
+        return { handled: true, response: `Deleted: ${item.text}` };
+      }
+      return { handled: true, response: `Couldn't find a task matching "${keyword}"` };
+    }
+
+    // === NAVIGATION ===
+    // "go to X", "show X", "open X"
+    const navMatch = lower.match(/^(?:go\s+to|show|open)\s+(?:the\s+)?(inbox|today|tomorrow|next|waiting|someday|done|settings|stats|routines)$/i);
+    if (navMatch) {
+      const page = navMatch[1] === 'stats' ? 'analytics' : navMatch[1];
+      this.app.navigateTo(page);
+      return { handled: true, response: `Showing ${page}` };
+    }
+
+    // === FOCUS MODE ===
+    if (lower.match(/^(?:start\s+)?focus(?:\s+mode)?$/i)) {
+      this.app.startFocus();
+      return { handled: true, response: 'Starting focus mode' };
+    }
+
+    // === SUGGEST TOP 3 ===
+    if (lower.match(/^(?:suggest|pick|choose)\s+(?:my\s+)?top\s*3$/i)) {
+      await this.app.suggestTop3();
+      return { handled: true, response: 'Suggested Top 3 based on your priorities' };
+    }
+
+    // === WHAT'S NEXT (cached) ===
+    if (lower.match(/^(?:what'?s?\s+next|what\s+should\s+i\s+(?:do|work\s+on))(?:\s+next)?$/i)) {
+      // Try to give a quick answer from cached recommendation or top task
+      if (this.cachedRecommendation) {
+        return { handled: true, response: this.cachedRecommendation };
+      }
+
+      // Generate simple recommendation from Top 3 or highest priority
+      const top3 = await db.getTop3Items();
+      if (top3.length > 0) {
+        const next = top3[0];
+        const response = `Your top priority is: ${next.text}`;
+        return { handled: true, response };
+      }
+
+      const todayItems = await db.getTodayItems();
+      const rated = todayItems.filter(i => db.isRated(i));
+      if (rated.length > 0) {
+        rated.sort((a, b) => {
+          const aScore = db.calculateScores(a).priority_score || 0;
+          const bScore = db.calculateScores(b).priority_score || 0;
+          return bScore - aScore;
+        });
+        const response = `Your highest priority task is: ${rated[0].text}`;
+        return { handled: true, response };
+      }
+
+      return { handled: true, response: 'No prioritized tasks found. Add some tasks to Today and rate them.' };
+    }
+
+    // Not a recognized offline command
+    return { handled: false };
   }
 
   async buildContext() {
@@ -474,7 +658,13 @@ Keep responses SHORT (1-3 sentences). Be direct and practical.`;
       this.showResponse(displayText);
       this.speak(displayText);
     } else {
-      // Plain text response
+      // Plain text response - cache if it's a recommendation
+      const lowerInput = originalInput.toLowerCase();
+      if (lowerInput.includes('what') && (lowerInput.includes('next') || lowerInput.includes('should') || lowerInput.includes('work'))) {
+        this.cachedRecommendation = response;
+        localStorage.setItem('aiLastRecommendation', response);
+      }
+
       this.showResponse(response);
       this.speak(response);
     }
