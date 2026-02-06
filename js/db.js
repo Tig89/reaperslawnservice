@@ -1467,7 +1467,8 @@ class BattlePlanDB {
     await clearStore('calibration_history');
 
     // Import items with whitelist validation (prevents prototype pollution)
-    // Use a single transaction for all items
+    // Use a single transaction for all items; use put() and deduplicate IDs
+    // so a collision from sanitization doesn't abort the entire batch
     if (data.items && data.items.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('items', 'readwrite');
@@ -1475,9 +1476,16 @@ class BattlePlanDB {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
 
+        const seenIds = new Set();
         for (const item of data.items) {
           // Sanitize: only copy whitelisted fields
           const sanitized = this.sanitizeItem(item);
+
+          // Deduplicate: if sanitization caused an ID collision, generate a new one
+          if (seenIds.has(sanitized.id)) {
+            sanitized.id = this.generateId();
+          }
+          seenIds.add(sanitized.id);
 
           // Apply defaults
           const itemWithDefaults = {
@@ -1496,13 +1504,14 @@ class BattlePlanDB {
           // Validate types
           this.validateItemTypes(itemWithDefaults);
 
-          store.add(itemWithDefaults);
+          // Use put() instead of add() so duplicates overwrite rather than aborting
+          store.put(itemWithDefaults);
         }
       });
     }
 
     // Import routines with whitelist validation
-    // Use a single transaction for all routines
+    // Use a single transaction; deduplicate IDs and use put() for safety
     if (data.routines && data.routines.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('routines', 'readwrite');
@@ -1510,9 +1519,16 @@ class BattlePlanDB {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
 
+        const seenIds = new Set();
         for (const routine of data.routines) {
           // Sanitize: only copy whitelisted fields
           const sanitized = this.sanitizeRoutine(routine);
+
+          // Deduplicate IDs
+          if (seenIds.has(sanitized.id)) {
+            sanitized.id = this.generateId();
+          }
+          seenIds.add(sanitized.id);
 
           // Validate routine items is an array of strings
           if (sanitized.items && Array.isArray(sanitized.items)) {
@@ -1526,7 +1542,7 @@ class BattlePlanDB {
             sanitized.name = 'Imported Routine';
           }
 
-          store.add(sanitized);
+          store.put(sanitized);
         }
       });
     }
@@ -1559,12 +1575,19 @@ class BattlePlanDB {
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
 
+        const seenIds = new Set();
         for (const entry of data.calibrationHistory) {
           // Sanitize and validate entry
           const sanitized = this.sanitizeCalibrationEntry(entry);
           if (!sanitized) continue; // Skip invalid entries
 
-          store.add(sanitized);
+          // Deduplicate IDs
+          if (seenIds.has(sanitized.id)) {
+            sanitized.id = this.generateId();
+          }
+          seenIds.add(sanitized.id);
+
+          store.put(sanitized);
         }
       });
     }
