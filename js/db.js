@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = {
 class BattlePlanDB {
   constructor() {
     this.db = null;
+    this._renderCache = null;
     this.ready = this.init();
   }
 
@@ -191,6 +192,65 @@ class BattlePlanDB {
     });
   }
 
+  async batchUpdateItems(updates) {
+    await this.ready;
+    if (!updates || updates.length === 0) return [];
+
+    // First, read all items that need updating
+    const ids = updates.map(u => u.id);
+    const items = await new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readonly');
+      const store = tx.objectStore('items');
+      const results = [];
+      let pending = ids.length;
+
+      for (const id of ids) {
+        const request = store.get(id);
+        request.onsuccess = () => {
+          results.push(request.result);
+          if (--pending === 0) resolve(results);
+        };
+        request.onerror = () => reject(request.error);
+      }
+    });
+
+    // Build a map for quick lookup
+    const itemMap = new Map();
+    for (const item of items) {
+      if (item) itemMap.set(item.id, item);
+    }
+
+    // Apply all updates in a single readwrite transaction
+    const now = new Date().toISOString();
+    const updatedItems = [];
+
+    await new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readwrite');
+      const store = tx.objectStore('items');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+
+      for (const { id, changes } of updates) {
+        const existing = itemMap.get(id);
+        if (!existing) continue;
+
+        const updated = {
+          ...existing,
+          ...changes,
+          updated_at: now
+        };
+        store.put(updated);
+        updatedItems.push(updated);
+      }
+    });
+
+    if (updatedItems.length > 0) {
+      this.scheduleAutoBackup();
+    }
+
+    return updatedItems;
+  }
+
   async deleteItem(id) {
     await this.ready;
     return new Promise((resolve, reject) => {
@@ -220,7 +280,25 @@ class BattlePlanDB {
     });
   }
 
+  async beginRenderCache() {
+    await this.ready;
+    this._renderCache = await new Promise((resolve, reject) => {
+      const tx = this.db.transaction('items', 'readonly');
+      const store = tx.objectStore('items');
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  endRenderCache() {
+    this._renderCache = null;
+  }
+
   async getAllItems() {
+    if (this._renderCache) {
+      return this._renderCache.map(item => ({ ...item }));
+    }
     await this.ready;
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction('items', 'readonly');
@@ -1211,6 +1289,21 @@ class BattlePlanDB {
         sanitized[key] = item[key];
       }
     }
+    // Sanitize id - must be alphanumeric string only
+    if (sanitized.id) {
+      sanitized.id = String(sanitized.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    }
+    if (!sanitized.id) {
+      sanitized.id = this.generateId();
+    }
+    // Sanitize tag - must be from valid list
+    if (sanitized.tag && !BattlePlanDB.VALID_TAGS.includes(sanitized.tag)) {
+      sanitized.tag = null;
+    }
+    // Sanitize text - strip HTML
+    if (sanitized.text) {
+      sanitized.text = String(sanitized.text).replace(/<[^>]*>/g, '');
+    }
     return sanitized;
   }
 
@@ -1220,6 +1313,21 @@ class BattlePlanDB {
       if (BattlePlanDB.ALLOWED_ROUTINE_FIELDS.has(key)) {
         sanitized[key] = routine[key];
       }
+    }
+    // Sanitize id
+    if (sanitized.id) {
+      sanitized.id = String(sanitized.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    }
+    if (!sanitized.id) {
+      sanitized.id = this.generateId();
+    }
+    // Sanitize name - strip HTML
+    if (sanitized.name) {
+      sanitized.name = String(sanitized.name).replace(/<[^>]*>/g, '');
+    }
+    // Sanitize items array - strip HTML from each
+    if (Array.isArray(sanitized.items)) {
+      sanitized.items = sanitized.items.map(i => String(i).replace(/<[^>]*>/g, ''));
     }
     return sanitized;
   }
@@ -1359,84 +1467,105 @@ class BattlePlanDB {
     await clearStore('calibration_history');
 
     // Import items with whitelist validation (prevents prototype pollution)
-    for (const item of (data.items || [])) {
-      // Sanitize: only copy whitelisted fields
-      const sanitized = this.sanitizeItem(item);
-
-      // Apply defaults
-      const itemWithDefaults = {
-        A: null, C: null, E: null, L: null, M: null, T: null,
-        estimate_bucket: null, confidence: null, actual_bucket: null,
-        next_action: null,
-        scheduled_for_date: null,
-        top3Date: null,
-        top3Locked: false,
-        archived: false,
-        created_at: sanitized.created || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        ...sanitized
-      };
-
-      // Validate types
-      this.validateItemTypes(itemWithDefaults);
-
+    // Use a single transaction for all items
+    if (data.items && data.items.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('items', 'readwrite');
         const store = tx.objectStore('items');
-        const request = store.add(itemWithDefaults);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+
+        for (const item of data.items) {
+          // Sanitize: only copy whitelisted fields
+          const sanitized = this.sanitizeItem(item);
+
+          // Apply defaults
+          const itemWithDefaults = {
+            A: null, C: null, E: null, L: null, M: null, T: null,
+            estimate_bucket: null, confidence: null, actual_bucket: null,
+            next_action: null,
+            scheduled_for_date: null,
+            top3Date: null,
+            top3Locked: false,
+            archived: false,
+            created_at: sanitized.created || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            ...sanitized
+          };
+
+          // Validate types
+          this.validateItemTypes(itemWithDefaults);
+
+          store.add(itemWithDefaults);
+        }
       });
     }
 
     // Import routines with whitelist validation
-    for (const routine of (data.routines || [])) {
-      // Sanitize: only copy whitelisted fields
-      const sanitized = this.sanitizeRoutine(routine);
-
-      // Validate routine items is an array of strings
-      if (sanitized.items && Array.isArray(sanitized.items)) {
-        sanitized.items = sanitized.items.filter(item => typeof item === 'string').slice(0, 100);
-      } else {
-        sanitized.items = [];
-      }
-
-      // Validate name is a string
-      if (typeof sanitized.name !== 'string') {
-        sanitized.name = 'Imported Routine';
-      }
-
+    // Use a single transaction for all routines
+    if (data.routines && data.routines.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('routines', 'readwrite');
         const store = tx.objectStore('routines');
-        const request = store.add(sanitized);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+
+        for (const routine of data.routines) {
+          // Sanitize: only copy whitelisted fields
+          const sanitized = this.sanitizeRoutine(routine);
+
+          // Validate routine items is an array of strings
+          if (sanitized.items && Array.isArray(sanitized.items)) {
+            sanitized.items = sanitized.items.filter(item => typeof item === 'string').slice(0, 100);
+          } else {
+            sanitized.items = [];
+          }
+
+          // Validate name is a string
+          if (typeof sanitized.name !== 'string') {
+            sanitized.name = 'Imported Routine';
+          }
+
+          store.add(sanitized);
+        }
       });
     }
 
     // Import settings with whitelist validation
     if (data.settings) {
-      for (const [key, value] of Object.entries(data.settings)) {
-        // Only import whitelisted settings keys
-        if (BattlePlanDB.ALLOWED_SETTINGS_KEYS.has(key)) {
-          await this.setSetting(key, value);
-        }
+      const settingsEntries = Object.entries(data.settings)
+        .filter(([key]) => BattlePlanDB.ALLOWED_SETTINGS_KEYS.has(key));
+
+      if (settingsEntries.length > 0) {
+        await new Promise((resolve, reject) => {
+          const tx = this.db.transaction('settings', 'readwrite');
+          const store = tx.objectStore('settings');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+
+          for (const [key, value] of settingsEntries) {
+            store.put({ key, value });
+          }
+        });
       }
     }
 
     // Import calibration history with validation
-    for (const entry of (data.calibrationHistory || [])) {
-      // Sanitize and validate entry
-      const sanitized = this.sanitizeCalibrationEntry(entry);
-      if (!sanitized) continue; // Skip invalid entries
-
+    // Use a single transaction for all calibration entries
+    if (data.calibrationHistory && data.calibrationHistory.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('calibration_history', 'readwrite');
         const store = tx.objectStore('calibration_history');
-        const request = store.add(sanitized);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+
+        for (const entry of data.calibrationHistory) {
+          // Sanitize and validate entry
+          const sanitized = this.sanitizeCalibrationEntry(entry);
+          if (!sanitized) continue; // Skip invalid entries
+
+          store.add(sanitized);
+        }
       });
     }
 

@@ -104,6 +104,7 @@ class BattlePlanApp {
     this.showArchived = false;
 
     this.init();
+    this.initOnboarding();
   }
 
   async init() {
@@ -712,35 +713,41 @@ class BattlePlanApp {
   // ==================== RENDERING ====================
 
   async render() {
-    switch (this.currentPage) {
-      case 'inbox':
-        await this.renderInbox();
-        break;
-      case 'today':
-        await this.renderToday();
-        await this.updateHUD();
-        break;
-      case 'tomorrow':
-        await this.renderTomorrow();
-        break;
-      case 'next':
-        await this.renderByStatus('next');
-        break;
-      case 'waiting':
-        await this.renderByStatus('waiting');
-        break;
-      case 'someday':
-        await this.renderByStatus('someday');
-        break;
-      case 'done':
-        await this.renderByStatus('done');
-        break;
-      case 'routines':
-        await this.renderRoutines();
-        break;
-      case 'analytics':
-        await this.renderAnalytics();
-        break;
+    // Cache all items for this render cycle to avoid redundant IndexedDB reads
+    await db.beginRenderCache();
+    try {
+      switch (this.currentPage) {
+        case 'inbox':
+          await this.renderInbox();
+          break;
+        case 'today':
+          await this.renderToday();
+          await this.updateHUD();
+          break;
+        case 'tomorrow':
+          await this.renderTomorrow();
+          break;
+        case 'next':
+          await this.renderByStatus('next');
+          break;
+        case 'waiting':
+          await this.renderByStatus('waiting');
+          break;
+        case 'someday':
+          await this.renderByStatus('someday');
+          break;
+        case 'done':
+          await this.renderByStatus('done');
+          break;
+        case 'routines':
+          await this.renderRoutines();
+          break;
+        case 'analytics':
+          await this.renderAnalytics();
+          break;
+      }
+    } finally {
+      db.endRenderCache();
     }
   }
 
@@ -1082,6 +1089,7 @@ class BattlePlanApp {
           <div class="item-header">
             <div class="item-text">${this.highlightSearch(item.text)}</div>
             ${isOverdue ? '<span class="badge badge-overdue">Overdue</span>' : ''}
+            <button class="item-edit-btn" data-id="${item.id}" title="Edit">&#x270F;&#xFE0F;</button>
           </div>
           ${nextActionHtml}
           ${waitingOnHtml}
@@ -1109,79 +1117,100 @@ class BattlePlanApp {
   }
 
   bindItemEvents() {
-    // Click to select
-    document.querySelectorAll('.item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        if (e.target.classList.contains('pill') ||
-            e.target.classList.contains('top3-toggle') ||
-            e.target.classList.contains('swipe-action')) return;
-        this.selectItem(item.dataset.id);
+    // Use event delegation - bind once to parent containers
+    document.querySelectorAll('.item-list').forEach(list => {
+      if (list._delegated) return; // Prevent double-binding
+      list._delegated = true;
+
+      list.addEventListener('click', (e) => {
+        // Edit button click
+        const editBtn = e.target.closest('.item-edit-btn');
+        if (editBtn) {
+          e.stopPropagation();
+          const id = editBtn.dataset.id;
+          this.openEditModal(id);
+          return;
+        }
+
+        // Status pill click
+        const pill = e.target.closest('.pill');
+        if (pill) {
+          e.stopPropagation();
+          const id = pill.closest('.item').dataset.id;
+          const status = pill.dataset.status;
+          this.setItemStatus(id, status);
+          return;
+        }
+
+        // Top 3 toggle click
+        const top3Btn = e.target.closest('.top3-toggle');
+        if (top3Btn) {
+          e.stopPropagation();
+          const id = top3Btn.closest('.item').dataset.id;
+          (async () => {
+            const item = await db.getItem(id);
+            const result = await db.setTop3(id, !item.isTop3);
+            if (result && result.error) {
+              this.showToast(result.message || result.error, 'warning', 4000);
+            } else {
+              this.render();
+              this.updateHUD();
+            }
+          })();
+          return;
+        }
+
+        // Done button click
+        const doneBtn = e.target.closest('.done-btn');
+        if (doneBtn) {
+          e.stopPropagation();
+          const id = doneBtn.closest('.item').dataset.id;
+          this.setItemStatus(id, 'done');
+          return;
+        }
+
+        // Tomorrow button click
+        const tomorrowBtn = e.target.closest('.tomorrow-btn');
+        if (tomorrowBtn) {
+          e.stopPropagation();
+          const id = tomorrowBtn.closest('.item').dataset.id;
+          (async () => {
+            await db.setTomorrow(id);
+            await this.render();
+            await this.updateHUD();
+          })();
+          return;
+        }
+
+        // Swipe action button click
+        const swipeAction = e.target.closest('.swipe-action');
+        if (swipeAction) {
+          e.stopPropagation();
+          const wrapper = swipeAction.closest('.item-wrapper');
+          const itemId = wrapper.dataset.id;
+          const action = swipeAction.dataset.action;
+          this.handleSwipeAction(itemId, action, wrapper);
+          return;
+        }
+
+        // Item click (select)
+        const item = e.target.closest('.item');
+        if (item) {
+          this.selectedItemId = item.dataset.id;
+          document.querySelectorAll('.item.selected').forEach(el => el.classList.remove('selected'));
+          item.classList.add('selected');
+        }
       });
 
-      // Double click to edit
-      item.addEventListener('dblclick', () => {
-        this.openEditModal(item.dataset.id);
-      });
-    });
-
-    // Status pills
-    document.querySelectorAll('.pill').forEach(pill => {
-      pill.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const itemId = pill.closest('.item').dataset.id;
-        const status = pill.dataset.status;
-        this.setItemStatus(itemId, status);
-      });
-    });
-
-    // Top 3 toggle
-    document.querySelectorAll('.top3-toggle').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const itemId = btn.closest('.item').dataset.id;
-        const item = await db.getItem(itemId);
-        const result = await db.setTop3(itemId, !item.isTop3);
-        if (result && result.error) {
-          alert(result.message || result.error);
-        } else {
-          this.render();
-          this.updateHUD();
+      list.addEventListener('dblclick', (e) => {
+        const item = e.target.closest('.item');
+        if (item) {
+          this.openEditModal(item.dataset.id);
         }
       });
     });
 
-    // Done button
-    document.querySelectorAll('.done-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const itemId = btn.closest('.item').dataset.id;
-        await this.setItemStatus(itemId, 'done');
-      });
-    });
-
-    // Tomorrow button (reschedule)
-    document.querySelectorAll('.tomorrow-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const itemId = btn.closest('.item').dataset.id;
-        await db.setTomorrow(itemId);
-        await this.render();
-        await this.updateHUD();
-      });
-    });
-
-    // Swipe action tray buttons
-    document.querySelectorAll('.swipe-action').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const wrapper = btn.closest('.item-wrapper');
-        const itemId = wrapper.dataset.id;
-        const action = btn.dataset.action;
-        await this.handleSwipeAction(itemId, action, wrapper);
-      });
-    });
-
-    // Bind swipe gestures if enabled
+    // Bind swipe gestures (still needs per-item for touch tracking)
     if (this.swipeEnabled) {
       this.bindSwipeGestures();
     }
@@ -2107,6 +2136,36 @@ class BattlePlanApp {
     }
   }
 
+  showConfirm(message) {
+    return new Promise((resolve) => {
+      let overlay = document.getElementById('confirm-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'confirm-overlay';
+        overlay.className = 'confirm-overlay';
+        overlay.innerHTML = `
+          <div class="confirm-dialog">
+            <p class="confirm-message"></p>
+            <div class="confirm-actions">
+              <button class="confirm-btn confirm-cancel">Cancel</button>
+              <button class="confirm-btn confirm-ok">OK</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+      }
+      overlay.querySelector('.confirm-message').textContent = message;
+      overlay.classList.add('visible');
+
+      const cleanup = (result) => {
+        overlay.classList.remove('visible');
+        resolve(result);
+      };
+
+      overlay.querySelector('.confirm-cancel').onclick = () => cleanup(false);
+      overlay.querySelector('.confirm-ok').onclick = () => cleanup(true);
+    });
+  }
+
   // ==================== UNDO ====================
 
   async saveForUndo(itemId, description, type = 'move') {
@@ -2409,9 +2468,9 @@ class BattlePlanApp {
     if (suggestion.suggested.length === 0) {
       const todayItems = await db.getTodayItems();
       if (todayItems.length === 0) {
-        alert('No tasks in Today. Add some tasks first!');
+        this.showToast('No tasks in Today. Add some tasks first!', 'warning', 4000);
       } else {
-        alert('No rated tasks found. Double-tap tasks to rate them with ACE+LMT scores.');
+        this.showToast('No rated tasks found. Double-tap tasks to rate them with ACE+LMT scores.', 'warning', 4000);
       }
       return;
     }
@@ -3062,7 +3121,7 @@ class BattlePlanApp {
 
     const name = document.getElementById('routine-edit-name').value.trim();
     if (!name) {
-      alert('Please enter a routine name');
+      this.showToast('Please enter a routine name', 'warning', 4000);
       return;
     }
 
@@ -3073,7 +3132,7 @@ class BattlePlanApp {
 
   async deleteRoutine() {
     if (!this.editingRoutineId) return;
-    if (confirm('Delete this routine?')) {
+    if (await this.showConfirm('Delete this routine?')) {
       await db.deleteRoutine(this.editingRoutineId);
       this.closeRoutineModal();
       await this.renderRoutines();
@@ -3083,12 +3142,12 @@ class BattlePlanApp {
   async runRoutine(id) {
     const routine = await db.getRoutine(id);
     if (routine.items.length === 0) {
-      alert('This routine has no items');
+      this.showToast('This routine has no items', 'warning', 4000);
       return;
     }
 
     await db.runRoutine(id);
-    alert(`Added ${routine.items.length} items to Today!`);
+    this.showToast(`Added ${routine.items.length} items to Today!`, 'warning', 4000);
     this.navigateTo('today');
   }
 
@@ -3199,7 +3258,7 @@ class BattlePlanApp {
     if (top3Items.length === 0) {
       const todayItems = await db.getTodayItems();
       if (todayItems.length === 0) {
-        alert('No items to focus on. Add items to Today first.');
+        this.showToast('No items to focus on. Add items to Today first.', 'warning', 4000);
         return;
       }
     }
@@ -3253,7 +3312,7 @@ class BattlePlanApp {
 
     if (this.selectedItemId) {
       const item = await db.getItem(this.selectedItemId);
-      const markDone = confirm('Focus session complete! Mark task as done?');
+      const markDone = await this.showConfirm('Focus session complete! Mark task as done?');
       if (markDone) {
         if (item.estimate_bucket) {
           this.pendingCompletionId = this.selectedItemId;
@@ -3362,7 +3421,7 @@ class BattlePlanApp {
       document.getElementById('import-confirm-modal').classList.remove('hidden');
     } catch (err) {
       debugLog('error', 'File read error', err);
-      alert('Unable to read file. Please check the file format and try again.');
+      this.showToast('Unable to read file. Please check the file format and try again.', 'warning', 4000);
     }
 
     e.target.value = '';
@@ -3375,12 +3434,12 @@ class BattlePlanApp {
       await db.importData(this.pendingImportData);
       this.pendingImportData = null;
       document.getElementById('import-confirm-modal').classList.add('hidden');
-      alert('Data imported successfully!');
+      this.showToast('Data imported successfully!', 'warning', 4000);
       await this.render();
       await this.updateHUD();
     } catch (err) {
       debugLog('error', 'Import error', err);
-      alert('Unable to import data. The file may be corrupted or incompatible.');
+      this.showToast('Unable to import data. The file may be corrupted or incompatible.', 'warning', 4000);
     }
   }
 
@@ -3627,6 +3686,45 @@ class BattlePlanApp {
   sanitizeText(text, maxLength = CONSTANTS.MAX_TASK_LENGTH) {
     if (!text || typeof text !== 'string') return '';
     return text.trim().substring(0, maxLength);
+  }
+
+  async initOnboarding() {
+    if (localStorage.getItem('battlePlanOnboarded')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'onboarding-overlay';
+    overlay.className = 'onboarding-overlay visible';
+    overlay.innerHTML = `
+      <div class="onboarding-card">
+        <h2>Welcome to Battle Plan</h2>
+        <div class="onboarding-steps">
+          <div class="onboarding-step">
+            <span class="onboarding-num">1</span>
+            <span><strong>Capture</strong> — Dump tasks into Inbox</span>
+          </div>
+          <div class="onboarding-step">
+            <span class="onboarding-num">2</span>
+            <span><strong>Process</strong> — Move to Today, Next, or Someday</span>
+          </div>
+          <div class="onboarding-step">
+            <span class="onboarding-num">3</span>
+            <span><strong>Prioritize</strong> — Pick your Top 3 for the day</span>
+          </div>
+          <div class="onboarding-step">
+            <span class="onboarding-num">4</span>
+            <span><strong>Focus</strong> — Work on #1, then #2, then #3</span>
+          </div>
+        </div>
+        <p class="onboarding-hint">Tip: Use presets when editing tasks for quick ratings</p>
+        <button class="onboarding-start-btn">Get Started</button>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('.onboarding-start-btn').addEventListener('click', () => {
+      overlay.classList.remove('visible');
+      setTimeout(() => overlay.remove(), 300);
+      localStorage.setItem('battlePlanOnboarded', 'true');
+    });
   }
 
   /**

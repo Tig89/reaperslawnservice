@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- Security headers -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self' https://api.groq.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self' https://api.groq.com; base-uri 'self'; form-action 'self'; object-src 'none';">
   <meta http-equiv="X-Frame-Options" content="DENY">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -386,14 +386,16 @@
 
         <input type="text" id="edit-text" placeholder="Task description" maxlength="500">
 
-        <div class="edit-row">
-          <label>Next Action (specific step)</label>
-          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?" maxlength="500">
-        </div>
-
-        <div class="edit-row">
-          <label>Notes</label>
-          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3" maxlength="2000"></textarea>
+        <!-- Presets (primary rating path - one tap to rate) -->
+        <div class="edit-section">
+          <label>Quick Rate</label>
+          <div class="preset-buttons">
+            <button class="preset-btn" data-preset="quick-win">Quick win</button>
+            <button class="preset-btn" data-preset="mission-critical">Mission-critical</button>
+            <button class="preset-btn" data-preset="money-maker">Money-maker</button>
+            <button class="preset-btn" data-preset="admin-tax">Admin tax</button>
+            <button class="preset-btn" data-preset="waiting-on-others">Waiting</button>
+          </div>
         </div>
 
         <div class="edit-row">
@@ -406,16 +408,14 @@
           </div>
         </div>
 
-        <!-- Presets -->
-        <div class="edit-section">
-          <label>Quick Presets</label>
-          <div class="preset-buttons">
-            <button class="preset-btn" data-preset="mission-critical">Mission-critical</button>
-            <button class="preset-btn" data-preset="money-maker">Money-maker</button>
-            <button class="preset-btn" data-preset="admin-tax">Admin tax</button>
-            <button class="preset-btn" data-preset="quick-win">Quick win</button>
-            <button class="preset-btn" data-preset="waiting-on-others">Waiting</button>
-          </div>
+        <div class="edit-row">
+          <label>Next Action (specific step)</label>
+          <input type="text" id="edit-next-action" placeholder="What's the very next physical action?" maxlength="500">
+        </div>
+
+        <div class="edit-row">
+          <label>Notes</label>
+          <textarea id="edit-notes" placeholder="Additional details, context, or links..." rows="3" maxlength="2000"></textarea>
         </div>
 
         <!-- ACE Scores -->
