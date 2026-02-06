@@ -1438,16 +1438,11 @@ class BattlePlanApp {
   // ==================== VOICE INPUT ====================
 
   initVoiceInput() {
-    const globalVoiceBtn = document.getElementById('global-voice-btn');
-
     if (!this.voiceSupported) {
       // Hide mic buttons if not supported
       document.querySelectorAll('.voice-btn').forEach(btn => {
         btn.style.display = 'none';
       });
-      if (globalVoiceBtn) {
-        globalVoiceBtn.classList.add('hidden');
-      }
       return;
     }
 
@@ -1480,37 +1475,6 @@ class BattlePlanApp {
     this.speechRecognition.onend = () => {
       this.stopVoiceInput();
     };
-
-    // Set up global voice button
-    if (globalVoiceBtn) {
-      globalVoiceBtn.addEventListener('click', () => {
-        this.startGlobalVoice();
-      });
-    }
-  }
-
-  startGlobalVoice() {
-    if (!this.voiceSupported || !this.speechRecognition) {
-      this.showToast('Voice not supported');
-      return;
-    }
-
-    // Toggle if already listening
-    if (this.isListening) {
-      this.stopVoiceInput();
-      this.showToast('Voice stopped');
-      return;
-    }
-
-    // Start listening without a specific input target
-    this.currentVoiceTarget = null;
-    this.startVoiceInput(null);
-
-    // Update global button state
-    const globalBtn = document.getElementById('global-voice-btn');
-    if (globalBtn) {
-      globalBtn.classList.add('listening');
-    }
   }
 
   startVoiceInput(targetInputId) {
@@ -1558,16 +1522,10 @@ class BattlePlanApp {
     this.isListening = false;
     this.voiceStartLock = false; // Release lock here, after speech ends
 
-    // Update all voice buttons (inline and global)
+    // Update all voice buttons
     document.querySelectorAll('.voice-btn').forEach(btn => {
       btn.classList.remove('listening');
     });
-
-    // Update global voice button
-    const globalBtn = document.getElementById('global-voice-btn');
-    if (globalBtn) {
-      globalBtn.classList.remove('listening');
-    }
 
     // Hide listening toast
     this.hideToast();

@@ -1880,59 +1880,6 @@ mark {
   align-items: center;
 }
 
-/* Global Voice Assistant Button (FAB) */
-.global-voice-btn {
-  position: fixed;
-  bottom: calc(var(--nav-height) + var(--safe-area-bottom) + 20px);
-  right: 20px;
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
-  border: none;
-  color: white;
-  font-size: 1.5rem;
-  cursor: pointer;
-  box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4);
-  z-index: 1000;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.global-voice-btn:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 25px rgba(233, 69, 96, 0.5);
-}
-
-.global-voice-btn:active {
-  transform: scale(0.95);
-}
-
-.global-voice-btn.listening {
-  animation: fab-pulse 1.5s infinite;
-  background: linear-gradient(135deg, var(--accent), #ff6b6b);
-}
-
-.global-voice-btn .voice-icon {
-  pointer-events: none;
-}
-
-@keyframes fab-pulse {
-  0%, 100% {
-    box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4), 0 0 0 0 rgba(233, 69, 96, 0.7);
-  }
-  50% {
-    box-shadow: 0 4px 20px rgba(233, 69, 96, 0.4), 0 0 0 20px rgba(233, 69, 96, 0);
-  }
-}
-
-/* Hide global voice btn if voice not supported */
-.global-voice-btn.hidden {
-  display: none;
-}
-
 /* ==================== TOAST NOTIFICATIONS ==================== */
 .toast {
   position: fixed;
