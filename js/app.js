@@ -191,6 +191,12 @@ class BattlePlanApp {
     if (navigator.onLine) {
       indicator.classList.add('hidden');
     } else {
+      // Only show if AI is configured (offline doesn't affect the app otherwise)
+      if (groqAssistant.shouldUseAI()) {
+        indicator.textContent = 'AI offline';
+      } else {
+        indicator.textContent = 'Offline';
+      }
       indicator.classList.remove('hidden');
     }
   }
