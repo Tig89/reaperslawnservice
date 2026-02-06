@@ -580,36 +580,32 @@ class BattlePlanDB {
    * 5. Greedy-fill: protected first (always kept), then flexible by density
    * 6. Overflow = what doesn't fit
    *
-   * @param {string} completedItemId - the item just completed
-   * @param {number} actualBucket - actual time it took
+   * @param {string} completedItemId - the item just completed (should already be in done status)
    * @param {string[]} lockedIds - IDs the user manually locked to today
    * @returns {Object} { keep, overflow, unrated, overrunMinutes, remainingCapacity, usableCapacity,
-   *                      completedItem, protectedOverflow }
+   *                      consumedMinutes, completedItem, protectedOverflow }
    */
-  async rerackAfterCompletion(completedItemId, actualBucket, lockedIds = []) {
+  async rerackAfterCompletion(completedItemId, lockedIds = []) {
     const todayItems = await this.getTodayItems();
     const allItems = await this.getAllItems();
     const usableCapacity = await this.getUsableCapacity();
     const today = this.getToday();
 
-    // Get the completed item for display
+    // Get the completed item for display (already in done status with actual_bucket set)
     const completedItem = await this.getItem(completedItemId);
+    const actualBucket = completedItem?.actual_bucket || completedItem?.estimate_bucket || 0;
     const estimateBucket = completedItem?.estimate_bucket || 0;
     const overrunMinutes = Math.max(0, actualBucket - estimateBucket);
 
-    // Calculate time already consumed by done tasks today (including the one just completed)
+    // Calculate time already consumed by done tasks today
     const doneToday = allItems.filter(i =>
       i.status === 'done' &&
-      i.updated_at && i.updated_at.startsWith(today)
+      (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))
     );
     let consumedMinutes = 0;
     for (const item of doneToday) {
       const bucket = item.actual_bucket || item.estimate_bucket || 0;
       consumedMinutes += bucket;
-    }
-    // Add the just-completed task if not yet in done status
-    if (!doneToday.find(i => i.id === completedItemId)) {
-      consumedMinutes += actualBucket;
     }
 
     const remainingCapacity = Math.max(0, usableCapacity - consumedMinutes);
@@ -1089,13 +1085,71 @@ class BattlePlanDB {
 
   // ==================== TASK COMPLETION ====================
 
-  async completeTask(id, actual_bucket, skipRecurrence = false) {
+  /**
+   * Infer how long a task actually took by measuring the gap between
+   * the previous completion's timestamp and now.
+   * Returns raw minutes or null if we can't infer (first task of day, long gap).
+   */
+  async inferActualMinutes(itemId) {
+    const today = this.getToday();
+    const allItems = await this.getAllItems();
+
+    // Find done tasks from today with completed_at, excluding the current item
+    const doneToday = allItems
+      .filter(i => i.status === 'done' && i.completed_at && i.completed_at.startsWith(today) && i.id !== itemId)
+      .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+
+    if (doneToday.length === 0) return null; // First task of the day
+
+    const lastCompletedAt = new Date(doneToday[0].completed_at);
+    const now = new Date();
+    const gapMinutes = Math.round((now - lastCompletedAt) / 60000);
+
+    // Sanity: if gap > 4 hours, probably includes a break
+    if (gapMinutes > 240) return null;
+    if (gapMinutes < 1) return null;
+
+    return gapMinutes;
+  }
+
+  /**
+   * Snap raw minutes to the nearest estimate bucket.
+   */
+  snapToBucket(minutes) {
+    if (!minutes || minutes <= 0) return 15;
+    const buckets = ESTIMATE_BUCKETS; // [15, 30, 60, 90, 120, 180]
+    let closest = buckets[0];
+    let minDiff = Math.abs(minutes - buckets[0]);
+    for (const b of buckets) {
+      if (Math.abs(minutes - b) < minDiff) {
+        minDiff = Math.abs(minutes - b);
+        closest = b;
+      }
+    }
+    return closest;
+  }
+
+  /**
+   * Complete a task. If actual_bucket is not provided, auto-infer from
+   * the gap between the previous completion and now.
+   * Always stores completed_at timestamp on the item.
+   */
+  async completeTask(id, actual_bucket = null, skipRecurrence = false) {
     const item = await this.getItem(id);
     if (!item) return null;
 
-    // Record calibration if we have both buckets
-    if (item.estimate_bucket && actual_bucket) {
-      await this.addCalibrationEntry(item.tag, item.estimate_bucket, actual_bucket);
+    // Auto-infer actual time if not explicitly provided
+    let finalActual = actual_bucket;
+    if (!finalActual && item.estimate_bucket) {
+      const inferredMinutes = await this.inferActualMinutes(id);
+      finalActual = inferredMinutes ? this.snapToBucket(inferredMinutes) : item.estimate_bucket;
+    }
+    finalActual = finalActual || item.estimate_bucket || 0;
+
+    // Only record calibration if actual was explicitly provided or meaningfully inferred
+    // (skip if actual === estimate, which means we fell back to estimate)
+    if (item.estimate_bucket && finalActual && finalActual !== item.estimate_bucket) {
+      await this.addCalibrationEntry(item.tag, item.estimate_bucket, finalActual);
     }
 
     // Create next recurring instance if task is recurring (unless skipping)
@@ -1105,7 +1159,8 @@ class BattlePlanDB {
 
     return this.updateItem(id, {
       status: 'done',
-      actual_bucket,
+      actual_bucket: finalActual,
+      completed_at: new Date().toISOString(),
       isTop3: false,
       top3Order: null,
       top3Date: null,

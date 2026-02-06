@@ -2558,12 +2558,13 @@ class BattlePlanApp {
     await this.saveForUndo(id, `Moved to ${status}`);
 
     if (status === 'done') {
-      // Check if item has estimate - prompt for actual time
-      if (item.estimate_bucket) {
-        this.pendingCompletionId = id;
-        document.getElementById('actual-time-modal').classList.remove('hidden');
-        return;
-      }
+      // Complete immediately - auto-infer actual time from timestamps
+      await db.completeTask(id);
+      await this.render();
+      await this.updateHUD();
+      // Check if day needs rebalancing
+      await this.checkRerackNeeded(id);
+      return;
     }
 
     let actionDescription = '';
@@ -2840,11 +2841,17 @@ class BattlePlanApp {
    * After a task completion, check if the day is now over capacity
    * and offer to rerack if so.
    */
-  async checkRerackNeeded(completedId, actualBucket, estimateBucket) {
-    const overrun = Math.max(0, actualBucket - estimateBucket);
+  async checkRerackNeeded(completedId) {
+    const item = await db.getItem(completedId);
+
+    // Only check rerack for tasks with estimates (otherwise can't compute capacity)
+    if (!item || !item.estimate_bucket) {
+      this.showUndoToast('Marked Done');
+      return;
+    }
 
     // Run rerack to see if we're over capacity
-    const result = await db.rerackAfterCompletion(completedId, actualBucket);
+    const result = await db.rerackAfterCompletion(completedId);
 
     // Only trigger if there's actual overflow
     if (result.overflow.length === 0) {
@@ -2854,11 +2861,10 @@ class BattlePlanApp {
 
     // Store rerack state
     this._rerackCompletedId = completedId;
-    this._rerackActualBucket = actualBucket;
     this._rerackLockedIds = [];
     this._rerackResult = result;
 
-    // Show the overrun notification with choice
+    // Show the rebalance prompt
     this.showRerackPrompt(result);
   }
 
@@ -2872,13 +2878,13 @@ class BattlePlanApp {
     const overMinutes = result.consumedMinutes - result.usableCapacity;
 
     if (ci && ci.actual_bucket > ci.estimate_bucket) {
-      // Task ran over estimate
+      // Task ran over estimate (auto-detected from timestamps)
       headerEl.className = 'rerack-header rerack-overrun';
       headerEl.innerHTML = `
-        <div class="rerack-headline">That took ${ci.actual_bucket}m (planned ${ci.estimate_bucket}m)</div>
-        <div class="rerack-detail">You're ${overMinutes > 0 ? overMinutes + 'm over capacity' : 'at capacity'}. ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit.</div>`;
+        <div class="rerack-headline">Last task ran over (~${ci.actual_bucket}m vs ${ci.estimate_bucket}m planned)</div>
+        <div class="rerack-detail">${overMinutes > 0 ? overMinutes + 'm over capacity. ' : ''}${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit.</div>`;
     } else {
-      // Not an overrun, just over capacity overall
+      // Over capacity overall
       headerEl.className = 'rerack-header rerack-overcap';
       headerEl.innerHTML = `
         <div class="rerack-headline">${overMinutes > 0 ? overMinutes + 'm over capacity' : 'At capacity'}</div>
@@ -2975,7 +2981,6 @@ class BattlePlanApp {
     // Recompute with updated locks
     const result = await db.rerackAfterCompletion(
       this._rerackCompletedId,
-      this._rerackActualBucket,
       this._rerackLockedIds
     );
     this._rerackResult = result;
@@ -3003,11 +3008,9 @@ class BattlePlanApp {
   }
 
   closeRerackModal() {
-    document.getElementById('rerack-modal').classList.remove('hidden');
     document.getElementById('rerack-modal').classList.add('hidden');
     this._rerackResult = null;
     this._rerackCompletedId = null;
-    this._rerackActualBucket = null;
     this._rerackLockedIds = [];
   }
 
@@ -3795,19 +3798,14 @@ class BattlePlanApp {
     this.stopFocus();
 
     if (this.selectedItemId) {
-      const item = await db.getItem(this.selectedItemId);
       const markDone = await this.showConfirm('Focus session complete! Mark task as done?');
       if (markDone) {
-        if (item.estimate_bucket) {
-          this.pendingCompletionId = this.selectedItemId;
-          document.getElementById('actual-time-modal').classList.remove('hidden');
-        } else {
-          await db.updateItem(this.selectedItemId, {
-            status: 'done',
-            isTop3: false,
-            top3Order: null
-          });
-        }
+        await db.completeTask(this.selectedItemId);
+        await this.render();
+        await this.updateHUD();
+        await this.checkRerackNeeded(this.selectedItemId);
+        this.selectedItemId = null;
+        return;
       }
     }
 
