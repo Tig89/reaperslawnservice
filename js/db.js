@@ -1184,7 +1184,7 @@ class BattlePlanDB {
   ]);
 
   static ALLOWED_ROUTINE_FIELDS = new Set([
-    'id', 'name', 'items', 'created_at', 'updated_at'
+    'id', 'name', 'items', 'created', 'created_at', 'updated_at'
   ]);
 
   static ALLOWED_CALIBRATION_FIELDS = new Set([

@@ -159,8 +159,8 @@ The user asked: "${query}"
 
 Respond conversationally and briefly.`;
 
-    // Check for API key - fall back to static response if not configured
-    if (!this.hasApiKey()) {
+    // Check if AI is enabled and configured - fall back to static response if not
+    if (!this.shouldUseAI()) {
       return this.getFallbackStatsResponse(stats, query);
     }
 

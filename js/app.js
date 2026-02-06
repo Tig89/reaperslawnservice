@@ -1782,7 +1782,7 @@ class BattlePlanApp {
     // ===== NAVIGATION PATTERNS =====
     // "go to...", "show...", "open...", "take me to...", "switch to...", "view..."
     const navPatterns = [
-      /^(?:go to|show|open|take me to|switch to|view)\s+(?:the\s+)?(?:my\s+)?(inbox|today|tomorrow|done|completed|routines?|settings?)$/i
+      /^(?:go to|show|open|take me to|switch to|view)\s+(?:the\s+)?(?:my\s+)?(inbox|today|tomorrow|next|waiting|someday|done|completed|routines?|stats|statistics|analytics|settings?)$/i
     ];
     for (const pattern of navPatterns) {
       const match = lower.match(pattern);
@@ -1792,6 +1792,7 @@ class BattlePlanApp {
         if (page === 'completed') page = 'done';
         if (page === 'routine') page = 'routines';
         if (page === 'setting') page = 'settings';
+        if (page === 'stats' || page === 'statistics') page = 'analytics';
         this.navigateTo(page);
         this.showToast(`Navigated to ${page}`);
         return;
@@ -1972,17 +1973,23 @@ class BattlePlanApp {
       'inbox': 'inbox',
       'today': 'today',
       'tomorrow': 'tomorrow',
+      'next': 'next',
+      'waiting': 'waiting',
+      'someday': 'someday',
       'done': 'done',
       'completed': 'done',
       'routines': 'routines',
       'routine': 'routines',
+      'analytics': 'analytics',
+      'stats': 'analytics',
+      'statistics': 'analytics',
       'settings': 'settings',
       'config': 'settings'
     };
 
     const targetPage = pageMap[page?.toLowerCase()] || page;
 
-    if (targetPage && ['inbox', 'today', 'tomorrow', 'done', 'routines', 'settings'].includes(targetPage)) {
+    if (targetPage && ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'analytics', 'settings'].includes(targetPage)) {
       this.navigateTo(targetPage);
       this.showToast(`Navigated to ${targetPage}`);
     } else {
@@ -3228,7 +3235,7 @@ class BattlePlanApp {
 
   // ==================== FOCUS MODE ====================
 
-  async startFocus() {
+  async startFocus(minutes) {
     const top3Items = await db.getTop3Items();
     if (top3Items.length === 0) {
       const todayItems = await db.getTodayItems();
@@ -3242,7 +3249,7 @@ class BattlePlanApp {
     if (!item) return;
 
     this.selectedItemId = item.id;
-    this.focusTimeRemaining = this.timerDefault * 60;
+    this.focusTimeRemaining = (minutes || this.timerDefault) * 60;
     this.focusPaused = false;
 
     document.getElementById('focus-task-name').textContent = item.text;
@@ -3684,7 +3691,3 @@ class BattlePlanApp {
 // Initialize app
 const app = new BattlePlanApp();
 
-// Initialize AI Voice Assistant (loads after app)
-if (window.VoiceAssistant) {
-  app.voiceAssistant = new VoiceAssistant(app);
-}
