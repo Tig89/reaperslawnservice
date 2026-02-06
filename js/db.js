@@ -566,6 +566,145 @@ class BattlePlanDB {
     return { keep, overflow, unrated, usedMinutes, capacity: usableCapacity };
   }
 
+  /**
+   * Rerack today after a task completion.
+   * Deterministic: same inputs => same outputs.
+   *
+   * Algorithm:
+   * 1. Compute overrun = actual_bucket - estimate_bucket (0 if under/equal)
+   * 2. Compute remaining capacity = usableCapacity - time already consumed by done tasks today
+   * 3. Separate remaining tasks into "protected" vs "flexible":
+   *    Protected = has dueDate == today, or has explicit scheduled time, or isTop3 locked
+   * 4. Rank flexible tasks by value density = priority_score / bufferedMinutes
+   *    (with slight bonus for shorter tasks: density * (1 + 10/bufferedMinutes))
+   * 5. Greedy-fill: protected first (always kept), then flexible by density
+   * 6. Overflow = what doesn't fit
+   *
+   * @param {string} completedItemId - the item just completed
+   * @param {number} actualBucket - actual time it took
+   * @param {string[]} lockedIds - IDs the user manually locked to today
+   * @returns {Object} { keep, overflow, unrated, overrunMinutes, remainingCapacity, usableCapacity,
+   *                      completedItem, protectedOverflow }
+   */
+  async rerackAfterCompletion(completedItemId, actualBucket, lockedIds = []) {
+    const todayItems = await this.getTodayItems();
+    const allItems = await this.getAllItems();
+    const usableCapacity = await this.getUsableCapacity();
+    const today = this.getToday();
+
+    // Get the completed item for display
+    const completedItem = await this.getItem(completedItemId);
+    const estimateBucket = completedItem?.estimate_bucket || 0;
+    const overrunMinutes = Math.max(0, actualBucket - estimateBucket);
+
+    // Calculate time already consumed by done tasks today (including the one just completed)
+    const doneToday = allItems.filter(i =>
+      i.status === 'done' &&
+      i.updated_at && i.updated_at.startsWith(today)
+    );
+    let consumedMinutes = 0;
+    for (const item of doneToday) {
+      const bucket = item.actual_bucket || item.estimate_bucket || 0;
+      consumedMinutes += bucket;
+    }
+    // Add the just-completed task if not yet in done status
+    if (!doneToday.find(i => i.id === completedItemId)) {
+      consumedMinutes += actualBucket;
+    }
+
+    const remainingCapacity = Math.max(0, usableCapacity - consumedMinutes);
+
+    // Get remaining (not-done, not the completed one) today items
+    const remaining = todayItems.filter(i => i.id !== completedItemId && i.status !== 'done');
+
+    // Separate rated vs unrated
+    const rated = [];
+    const unrated = [];
+    for (const item of remaining) {
+      if (this.isRated(item)) {
+        rated.push(item);
+      } else {
+        unrated.push(item);
+      }
+    }
+
+    // Enrich rated items with scores and buffered time
+    const scored = await Promise.all(rated.map(async item => {
+      const scores = this.calculateScores(item);
+      const bufferedMinutes = await this.getBufferedMinutes(item) || 0;
+      const isUrgent = item.C === 5;
+      const badges = this.calculateBadges(item);
+
+      // Determine if "protected" (should not be auto-moved)
+      const isProtected =
+        (item.dueDate && item.dueDate <= today) || // due today or overdue
+        (item.isTop3 && item.top3Locked) ||         // manually locked in Top 3
+        lockedIds.includes(item.id);                 // user locked via rerack modal
+
+      // Value density: points per minute, with bonus for shorter tasks
+      const density = bufferedMinutes > 0
+        ? (scores.priority_score || 0) / bufferedMinutes * (1 + 10 / bufferedMinutes)
+        : (scores.priority_score || 0);
+
+      return {
+        ...item, ...scores, bufferedMinutes, isUrgent, badges,
+        isProtected, density
+      };
+    }));
+
+    // Split into protected and flexible
+    const protectedTasks = scored.filter(i => i.isProtected);
+    const flexible = scored.filter(i => !i.isProtected);
+
+    // Sort flexible by value density descending
+    flexible.sort((a, b) => b.density - a.density);
+
+    // Greedy fill: protected first (always kept), then flexible by density
+    const keep = [];
+    const overflow = [];
+    let usedMinutes = 0;
+
+    // Protected tasks always stay (unless they alone exceed capacity)
+    for (const item of protectedTasks) {
+      keep.push({ ...item, reason: null });
+      usedMinutes += item.bufferedMinutes;
+    }
+
+    // Fill with flexible tasks
+    for (const item of flexible) {
+      if (usedMinutes + item.bufferedMinutes <= remainingCapacity) {
+        keep.push({ ...item, reason: null });
+        usedMinutes += item.bufferedMinutes;
+      } else {
+        // Determine reason for overflow
+        let reason = 'doesn\'t fit remaining time';
+        if (item.density < 0.15) reason = 'low impact per minute';
+        else if (item.bufferedMinutes > remainingCapacity * 0.7) reason = 'too long for remaining time';
+        overflow.push({ ...item, reason });
+      }
+    }
+
+    // Check if protected tasks alone exceed capacity
+    const protectedMinutes = protectedTasks.reduce((s, i) => s + i.bufferedMinutes, 0);
+    const protectedOverflow = protectedMinutes > remainingCapacity;
+
+    return {
+      keep,
+      overflow,
+      unrated,
+      overrunMinutes,
+      remainingCapacity,
+      usableCapacity,
+      consumedMinutes,
+      completedItem: completedItem ? {
+        text: completedItem.text,
+        estimate_bucket: estimateBucket,
+        actual_bucket: actualBucket
+      } : null,
+      protectedOverflow
+    };
+  }
+
   // ==================== CAPACITY ====================
 
   async getUsableCapacity() {

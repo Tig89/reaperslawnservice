@@ -490,6 +490,10 @@ class BattlePlanApp {
     });
     document.getElementById('skip-actual-btn').addEventListener('click', () => this.skipActualTime());
 
+    // Auto-Rack Modal
+    document.getElementById('rerack-apply-btn').addEventListener('click', () => this.applyRerack());
+    document.getElementById('rerack-close-btn').addEventListener('click', () => this.closeRerackModal());
+
     // Routine Modal
     document.getElementById('routine-item-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.addRoutineItem();
@@ -2799,13 +2803,19 @@ class BattlePlanApp {
   async completeWithActualTime(actualBucket) {
     if (!this.pendingCompletionId) return;
 
-    await db.completeTask(this.pendingCompletionId, actualBucket);
+    const completedId = this.pendingCompletionId;
+    const item = await db.getItem(completedId);
+    const estimateBucket = item?.estimate_bucket || 0;
+
+    await db.completeTask(completedId, actualBucket);
     this.pendingCompletionId = null;
     document.getElementById('actual-time-modal').classList.add('hidden');
 
     await this.render();
     await this.updateHUD();
-    this.showUndoToast('Marked Done');
+
+    // Check if we should trigger rerack
+    await this.checkRerackNeeded(completedId, actualBucket, estimateBucket);
   }
 
   async skipActualTime() {
@@ -2822,6 +2832,183 @@ class BattlePlanApp {
     await this.render();
     await this.updateHUD();
     this.showUndoToast('Marked Done');
+  }
+
+  // ==================== AUTO-RACK (completion-triggered rebalance) ====================
+
+  /**
+   * After a task completion, check if the day is now over capacity
+   * and offer to rerack if so.
+   */
+  async checkRerackNeeded(completedId, actualBucket, estimateBucket) {
+    const overrun = Math.max(0, actualBucket - estimateBucket);
+
+    // Run rerack to see if we're over capacity
+    const result = await db.rerackAfterCompletion(completedId, actualBucket);
+
+    // Only trigger if there's actual overflow
+    if (result.overflow.length === 0) {
+      this.showUndoToast('Marked Done');
+      return;
+    }
+
+    // Store rerack state
+    this._rerackCompletedId = completedId;
+    this._rerackActualBucket = actualBucket;
+    this._rerackLockedIds = [];
+    this._rerackResult = result;
+
+    // Show the overrun notification with choice
+    this.showRerackPrompt(result);
+  }
+
+  /**
+   * Show lightweight overrun prompt: "That took Xm (planned Ym). Over by Zm."
+   * with [Auto-fix my day] and [I'll handle it]
+   */
+  showRerackPrompt(result) {
+    const ci = result.completedItem;
+    const headerEl = document.getElementById('rerack-header');
+    const overMinutes = result.consumedMinutes - result.usableCapacity;
+
+    if (ci && ci.actual_bucket > ci.estimate_bucket) {
+      // Task ran over estimate
+      headerEl.className = 'rerack-header rerack-overrun';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">That took ${ci.actual_bucket}m (planned ${ci.estimate_bucket}m)</div>
+        <div class="rerack-detail">You're ${overMinutes > 0 ? overMinutes + 'm over capacity' : 'at capacity'}. ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit.</div>`;
+    } else {
+      // Not an overrun, just over capacity overall
+      headerEl.className = 'rerack-header rerack-overcap';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">${overMinutes > 0 ? overMinutes + 'm over capacity' : 'At capacity'}</div>
+        <div class="rerack-detail">${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit today.</div>`;
+    }
+
+    this.renderRerackPlan(result);
+    document.getElementById('rerack-modal').classList.remove('hidden');
+  }
+
+  /**
+   * Render the rerack plan: keep today / move to tomorrow with lock toggles
+   */
+  renderRerackPlan(result) {
+    const listEl = document.getElementById('rerack-plan-list');
+    let html = '';
+
+    // Remaining capacity bar
+    html += `<div class="schedule-capacity">Remaining: <strong>${result.remainingCapacity}</strong>m of ${result.usableCapacity}m capacity (${result.consumedMinutes}m used)</div>`;
+
+    // Keep today section
+    if (result.keep.length > 0) {
+      const keepMin = result.keep.reduce((s, i) => s + i.bufferedMinutes, 0);
+      html += `<div class="schedule-section-label schedule-keep-label">Staying Today (${keepMin}m)</div>`;
+      for (const item of result.keep) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        const protectedBadge = item.isProtected ? '<span class="rerack-protected-badge">protected</span>' : '';
+        html += `<div class="schedule-item schedule-item-keep">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}${protectedBadge}</span>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+        </div>`;
+      }
+    }
+
+    // Move to tomorrow section with lock toggles
+    if (result.overflow.length > 0) {
+      const overflowMin = result.overflow.reduce((s, i) => s + i.bufferedMinutes, 0);
+      html += `<div class="schedule-section-label schedule-overflow-label">Move to Tomorrow (${overflowMin}m)</div>`;
+      for (const item of result.overflow) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        const isLocked = this._rerackLockedIds.includes(item.id);
+        html += `<div class="schedule-item schedule-item-overflow">
+          <div class="schedule-item-text">
+            ${this.escapeHtml(item.text)}
+            <div class="rerack-reason">${item.reason || ''}</div>
+          </div>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+          <button class="rerack-lock-btn ${isLocked ? 'locked' : ''}" data-id="${item.id}">
+            ${isLocked ? 'Locked today' : 'Lock today'}
+          </button>
+        </div>`;
+      }
+    }
+
+    // Unrated
+    if (result.unrated.length > 0) {
+      html += `<div class="schedule-section-label schedule-unrated-label">Unrated (${result.unrated.length})</div>`;
+      for (const item of result.unrated) {
+        html += `<div class="schedule-item schedule-item-unrated">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}</span>
+        </div>`;
+      }
+    }
+
+    listEl.innerHTML = html;
+
+    // Bind lock toggle buttons
+    listEl.querySelectorAll('.rerack-lock-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.toggleRerackLock(btn.dataset.id));
+    });
+
+    // Update impossible warning
+    const impossibleEl = document.getElementById('rerack-impossible');
+    const applyBtn = document.getElementById('rerack-apply-btn');
+    if (result.protectedOverflow) {
+      impossibleEl.classList.remove('hidden');
+      applyBtn.disabled = true;
+    } else {
+      impossibleEl.classList.add('hidden');
+      applyBtn.disabled = false;
+    }
+  }
+
+  /**
+   * Toggle a task's "lock today" state and recompute rerack
+   */
+  async toggleRerackLock(id) {
+    if (this._rerackLockedIds.includes(id)) {
+      this._rerackLockedIds = this._rerackLockedIds.filter(i => i !== id);
+    } else {
+      this._rerackLockedIds.push(id);
+    }
+
+    // Recompute with updated locks
+    const result = await db.rerackAfterCompletion(
+      this._rerackCompletedId,
+      this._rerackActualBucket,
+      this._rerackLockedIds
+    );
+    this._rerackResult = result;
+    this.renderRerackPlan(result);
+  }
+
+  /**
+   * Apply the rerack: move overflow tasks to tomorrow
+   */
+  async applyRerack() {
+    const result = this._rerackResult;
+    if (!result || result.overflow.length === 0) {
+      this.closeRerackModal();
+      return;
+    }
+
+    for (const item of result.overflow) {
+      await db.setTomorrow(item.id);
+    }
+
+    this.closeRerackModal();
+    this.showToast(`Moved ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} to Tomorrow`);
+    await this.render();
+    await this.updateHUD();
+  }
+
+  closeRerackModal() {
+    document.getElementById('rerack-modal').classList.remove('hidden');
+    document.getElementById('rerack-modal').classList.add('hidden');
+    this._rerackResult = null;
+    this._rerackCompletedId = null;
+    this._rerackActualBucket = null;
+    this._rerackLockedIds = [];
   }
 
   // ==================== KEYBOARD SHORTCUTS ====================

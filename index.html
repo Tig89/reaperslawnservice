@@ -652,6 +652,21 @@
       </div>
     </div>
 
+    <!-- Auto-Rack Modal (completion-triggered rebalance) -->
+    <div id="rerack-modal" class="overlay hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <div id="rerack-header" class="rerack-header"></div>
+        <div id="rerack-plan-list"></div>
+        <div id="rerack-impossible" class="rerack-impossible hidden">
+          Today can't fit all locked items. You must move at least one.
+        </div>
+        <div class="modal-actions">
+          <button id="rerack-apply-btn" class="btn-primary">Apply</button>
+          <button id="rerack-close-btn" class="btn-secondary">I'll handle it</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Overdue Management Modal -->
     <div id="schedule-modal" class="overlay hidden" role="dialog" aria-modal="true">
       <div class="modal-content">

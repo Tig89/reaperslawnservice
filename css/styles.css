@@ -487,6 +487,91 @@ body {
   margin-left: 4px;
 }
 
+/* ==================== AUTO-RACK MODAL ==================== */
+.rerack-header {
+  text-align: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  border-radius: var(--border-radius);
+}
+
+.rerack-overrun {
+  background: rgba(255, 165, 2, 0.15);
+  border: 1px solid var(--warning);
+}
+
+.rerack-overrun .rerack-headline {
+  font-weight: 600;
+  color: var(--warning);
+  margin-bottom: 4px;
+}
+
+.rerack-overrun .rerack-detail {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rerack-overcap {
+  background: rgba(255, 71, 87, 0.15);
+  border: 1px solid var(--danger);
+}
+
+.rerack-overcap .rerack-headline {
+  font-weight: 600;
+  color: var(--danger);
+  margin-bottom: 4px;
+}
+
+.rerack-overcap .rerack-detail {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+#rerack-plan-list {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.rerack-lock-btn {
+  background: none;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 32px;
+}
+
+.rerack-lock-btn.locked {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(108, 92, 231, 0.15);
+}
+
+.rerack-reason {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.rerack-protected-badge {
+  font-size: var(--font-size-xs);
+  color: var(--done);
+  margin-left: 4px;
+}
+
+.rerack-impossible {
+  text-align: center;
+  padding: var(--spacing-sm);
+  color: var(--danger);
+  font-weight: 500;
+  background: rgba(255, 71, 87, 0.1);
+  border-radius: var(--border-radius);
+  margin-top: var(--spacing-sm);
+}
+
 /* ==================== AUTO-SCHEDULE MODAL ==================== */
 .schedule-capacity {
   text-align: center;
