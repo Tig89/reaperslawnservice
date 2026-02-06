@@ -472,6 +472,21 @@ body {
   display: none;
 }
 
+/* ==================== TEMPLATE METADATA ==================== */
+.template-meta {
+  display: inline-block;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+.routine-checklist .template-meta {
+  margin-left: 4px;
+}
+
 /* ==================== AUTO-SCHEDULE MODAL ==================== */
 .schedule-capacity {
   text-align: center;

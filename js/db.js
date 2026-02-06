@@ -1237,17 +1237,73 @@ class BattlePlanDB {
     if (!routine) return [];
 
     const today = this.getToday();
+    const targetStatus = routine.target_status || 'today';
     const createdItems = [];
 
-    for (const itemText of routine.items) {
-      const item = await this.addItem(itemText);
-      await this.updateItem(item.id, {
-        status: 'today',
-        scheduled_for_date: today
-      });
+    for (const entry of routine.items) {
+      // Support both legacy string items and rich template items
+      const isTemplate = typeof entry === 'object' && entry !== null;
+      const text = isTemplate ? entry.text : entry;
+
+      const item = await this.addItem(text);
+
+      // Build updates from template metadata
+      const updates = {
+        status: targetStatus,
+        scheduled_for_date: targetStatus === 'today' ? today : null
+      };
+
+      if (isTemplate) {
+        if (entry.tag) updates.tag = entry.tag;
+        if (entry.A != null) updates.A = entry.A;
+        if (entry.C != null) updates.C = entry.C;
+        if (entry.E != null) updates.E = entry.E;
+        if (entry.L != null) updates.L = entry.L;
+        if (entry.M != null) updates.M = entry.M;
+        if (entry.T != null) updates.T = entry.T;
+        if (entry.estimate_bucket) updates.estimate_bucket = entry.estimate_bucket;
+        if (entry.confidence) updates.confidence = entry.confidence;
+        if (entry.recurrence) {
+          updates.recurrence = entry.recurrence;
+          if (entry.recurrence_day != null) updates.recurrence_day = entry.recurrence_day;
+        }
+      }
+
+      await this.updateItem(item.id, updates);
+
+      // Create subtasks if template has them
+      if (isTemplate && Array.isArray(entry.subtasks)) {
+        for (const subText of entry.subtasks) {
+          if (typeof subText === 'string' && subText.trim()) {
+            await this.addSubtask(item.id, subText.trim());
+          }
+        }
+      }
+
       createdItems.push(item);
     }
     return createdItems;
+  }
+
+  /**
+   * Create a template item from an existing task (for Save as Template)
+   */
+  itemToTemplate(item) {
+    const template = { text: item.text };
+    if (item.tag) template.tag = item.tag;
+    if (item.A != null) template.A = item.A;
+    if (item.C != null) template.C = item.C;
+    if (item.E != null) template.E = item.E;
+    if (item.L != null) template.L = item.L;
+    if (item.M != null) template.M = item.M;
+    if (item.T != null) template.T = item.T;
+    if (item.estimate_bucket) template.estimate_bucket = item.estimate_bucket;
+    if (item.confidence) template.confidence = item.confidence;
+    if (item.recurrence) {
+      template.recurrence = item.recurrence;
+      if (item.recurrence_day != null) template.recurrence_day = item.recurrence_day;
+    }
+    return template;
   }
 
   // ==================== SETTINGS ====================
@@ -1587,9 +1643,11 @@ class BattlePlanDB {
           }
           seenIds.add(sanitized.id);
 
-          // Validate routine items is an array of strings
+          // Validate routine items is an array of strings or template objects
           if (sanitized.items && Array.isArray(sanitized.items)) {
-            sanitized.items = sanitized.items.filter(item => typeof item === 'string').slice(0, 100);
+            sanitized.items = sanitized.items.filter(item =>
+              typeof item === 'string' || (typeof item === 'object' && item !== null && typeof item.text === 'string')
+            ).slice(0, 100);
           } else {
             sanitized.items = [];
           }

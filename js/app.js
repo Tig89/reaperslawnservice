@@ -433,6 +433,7 @@ class BattlePlanApp {
 
     // Edit Modal
     document.getElementById('edit-save-btn').addEventListener('click', () => this.saveEditItem());
+    document.getElementById('edit-template-btn').addEventListener('click', () => this.saveAsTemplate());
     document.getElementById('edit-delete-btn').addEventListener('click', () => this.deleteEditItem());
     document.getElementById('edit-cancel-btn').addEventListener('click', () => this.closeEditModal());
 
@@ -1683,14 +1684,25 @@ class BattlePlanApp {
     const updates = {};
     if (data.scheduled_date) {
       updates.scheduled_for_date = data.scheduled_date;
-      updates.status = data.scheduled_date === db.getToday() ? 'today' : 'tomorrow';
+      const today = db.getToday();
+      const tomorrow = db.getTomorrow();
+      if (data.scheduled_date === today) updates.status = 'today';
+      else if (data.scheduled_date === tomorrow) updates.status = 'tomorrow';
+      else updates.status = 'next';
     }
     if (data.due_date) {
       updates.dueDate = data.due_date;
     }
     if (data.estimate_minutes) {
       updates.estimate_bucket = data.estimate_minutes;
-      updates.confidence = 'medium'; // Default confidence for voice-added
+      updates.confidence = 'medium';
+    }
+    if (data.recurrence) {
+      updates.recurrence = data.recurrence;
+      if (data.recurrence_day != null) updates.recurrence_day = data.recurrence_day;
+    }
+    if (data.tag && CONSTANTS.VALID_TAGS.includes(data.tag)) {
+      updates.tag = data.tag;
     }
 
     if (Object.keys(updates).length > 0) {
@@ -1700,8 +1712,10 @@ class BattlePlanApp {
     await this.render();
     await this.updateHUD();
 
+    // Build descriptive toast message
     let msg = `Added: ${data.text.substring(0, 25)}`;
-    if (data.scheduled_date) msg += ` (${data.scheduled_date === db.getToday() ? 'today' : data.scheduled_date})`;
+    if (data.recurrence) msg += ` (${data.recurrence})`;
+    else if (data.scheduled_date) msg += ` (${data.scheduled_date === db.getToday() ? 'today' : data.scheduled_date})`;
     this.showToast(msg);
   }
 
@@ -2392,14 +2406,138 @@ class BattlePlanApp {
     }
 
     try {
-      await db.addItem(text);
-      input.value = '';
-      await this.renderInbox();
+      // Try NLP smart-parse if AI is enabled and input looks like natural language
+      const parsed = await this.smartParseTask(text);
+
+      if (parsed && parsed.text) {
+        // AI parsed it — create task with extracted metadata
+        const item = await db.addItem(parsed.text);
+        const updates = {};
+
+        if (parsed.scheduled_date) {
+          updates.scheduled_for_date = parsed.scheduled_date;
+          const today = db.getToday();
+          const tomorrow = db.getTomorrow();
+          if (parsed.scheduled_date === today) updates.status = 'today';
+          else if (parsed.scheduled_date === tomorrow) updates.status = 'tomorrow';
+          else updates.status = 'next';
+        }
+        if (parsed.due_date) updates.dueDate = parsed.due_date;
+        if (parsed.estimate_minutes) {
+          updates.estimate_bucket = parsed.estimate_minutes;
+          updates.confidence = 'medium';
+        }
+        if (parsed.recurrence) {
+          updates.recurrence = parsed.recurrence;
+          if (parsed.recurrence_day != null) updates.recurrence_day = parsed.recurrence_day;
+        }
+        if (parsed.tag && CONSTANTS.VALID_TAGS.includes(parsed.tag)) {
+          updates.tag = parsed.tag;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await db.updateItem(item.id, updates);
+        }
+
+        input.value = '';
+
+        // Build feedback message
+        const parts = [parsed.text.substring(0, 25)];
+        if (parsed.recurrence) parts.push(parsed.recurrence);
+        if (parsed.tag) parts.push(parsed.tag);
+        if (parsed.scheduled_date && !parsed.recurrence) parts.push(parsed.scheduled_date);
+        this.showToast(`Smart add: ${parts.join(' | ')}`);
+      } else {
+        // No parse or AI disabled — add as plain text
+        await db.addItem(text);
+        input.value = '';
+      }
+
+      await this.render();
       input.focus();
     } catch (err) {
       debugLog('error', 'Error adding task', err);
       this.showToast('Error adding task. Storage may be full.');
     }
+  }
+
+  /**
+   * Try to NLP-parse task input. Returns parsed data or null.
+   * Only calls AI if input contains temporal/recurrence keywords.
+   */
+  async smartParseTask(text) {
+    // Only attempt NLP if AI is available
+    if (!groqAssistant.shouldUseAI()) return this.regexParseTask(text);
+
+    // Check if input has keywords worth parsing (avoid API calls for "Buy milk")
+    const nlpKeywords = /\b(every|daily|weekly|monthly|tomorrow|today|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|by |due |in \d+ days?|morning|afternoon|evening)\b/i;
+    if (!nlpKeywords.test(text)) return this.regexParseTask(text);
+
+    // Call Groq for smart parsing
+    return await groqAssistant.parseTaskInput(text);
+  }
+
+  /**
+   * Offline regex-based task parser for common patterns.
+   * Handles: "every [day]", "tomorrow", "daily", "weekly"
+   */
+  regexParseTask(text) {
+    const lower = text.toLowerCase();
+    let taskText = text;
+    let recurrence = null;
+    let recurrence_day = null;
+    let scheduled_date = null;
+    let tag = null;
+
+    const dayMap = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+
+    // "every [dayname]"
+    const everyDayMatch = lower.match(/\bevery\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+    if (everyDayMatch) {
+      recurrence = 'weekly';
+      recurrence_day = dayMap[everyDayMatch[1].toLowerCase()];
+      taskText = text.replace(/\s*every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s*/i, ' ').trim();
+      // Calculate next occurrence
+      const today = new Date();
+      let daysUntil = recurrence_day - today.getDay();
+      if (daysUntil <= 0) daysUntil += 7;
+      const next = new Date(today);
+      next.setDate(today.getDate() + daysUntil);
+      scheduled_date = next.toISOString().split('T')[0];
+    }
+
+    // "every day" / "daily"
+    if (!recurrence && /\b(every\s*day|daily)\b/i.test(lower)) {
+      recurrence = 'daily';
+      taskText = text.replace(/\s*(every\s*day|daily)\s*/i, ' ').trim();
+      scheduled_date = db.getToday();
+    }
+
+    // "every month" / "monthly"
+    if (!recurrence && /\b(every\s*month|monthly)\b/i.test(lower)) {
+      recurrence = 'monthly';
+      taskText = text.replace(/\s*(every\s*month|monthly)\s*/i, ' ').trim();
+    }
+
+    // "tomorrow"
+    if (!scheduled_date && /\btomorrow\b/i.test(lower)) {
+      scheduled_date = db.getTomorrow();
+      taskText = taskText.replace(/\s*tomorrow\s*/i, ' ').trim();
+    }
+
+    // Strip time references (not stored yet, but clean the text)
+    taskText = taskText.replace(/\s*at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*/i, ' ').trim();
+
+    // Simple tag inference
+    if (/\b(lawn|mow|house|clean|cook|repair|garage|laundry|dishes)\b/i.test(lower)) tag = 'Home';
+    else if (/\b(pt|drill|formation|army|ruck|range)\b/i.test(lower)) tag = 'Army';
+    else if (/\b(client|invoice|business|money|marketing|website|sales)\b/i.test(lower)) tag = 'Business';
+
+    // Only return parsed data if we found something
+    if (recurrence || scheduled_date || tag) {
+      return { text: taskText || text, scheduled_date, recurrence, recurrence_day, tag, due_date: null, estimate_minutes: null };
+    }
+    return null;
   }
 
   async setItemStatus(id, status) {
@@ -2915,6 +3053,38 @@ class BattlePlanApp {
     document.getElementById('edit-modal').classList.add('hidden');
   }
 
+  async saveAsTemplate() {
+    if (!this.editingItemId) return;
+
+    const item = await db.getItem(this.editingItemId);
+    if (!item) return;
+
+    // Get subtasks for this item
+    const subtasks = await db.getSubtasks(item.id);
+    const templateItem = db.itemToTemplate(item);
+    if (subtasks.length > 0) {
+      templateItem.subtasks = subtasks.map(s => s.text);
+    }
+
+    // Ask which routine to add to, or create a new one
+    const routines = await db.getAllRoutines();
+
+    if (routines.length === 0) {
+      // No routines exist — create one
+      const routine = await db.addRoutine('My Template');
+      routine.items.push(templateItem);
+      await db.updateRoutine(routine.id, { items: routine.items });
+      this.showToast(`Saved to new template "My Template"`);
+    } else {
+      // Show a simple picker using confirm dialog pattern
+      // For now, add to the most recently created routine (or create new)
+      const routine = routines[routines.length - 1];
+      routine.items.push(templateItem);
+      await db.updateRoutine(routine.id, { items: routine.items });
+      this.showToast(`Saved to "${routine.name}" template`);
+    }
+  }
+
   async saveEditItem() {
     if (!this.editingItemId) return;
     this.invalidateHudCache(); // Data is changing
@@ -3109,24 +3279,37 @@ class BattlePlanApp {
       return;
     }
 
-    list.innerHTML = routines.map(routine => `
+    list.innerHTML = routines.map(routine => {
+      const hasTemplates = routine.items.some(i => typeof i === 'object');
+      const label = hasTemplates ? 'Template' : 'Routine';
+      return `
       <li class="routine-item" data-id="${routine.id}">
         <div class="routine-header">
           <span class="routine-name">${this.escapeHtml(routine.name)}</span>
-          <span class="routine-count">${routine.items.length} items</span>
+          <span class="routine-count">${routine.items.length} items${hasTemplates ? ' (template)' : ''}</span>
         </div>
         ${routine.items.length > 0 ? `
           <ul class="routine-checklist">
-            ${routine.items.slice(0, 5).map(item => `<li>${this.escapeHtml(item)}</li>`).join('')}
+            ${routine.items.slice(0, 5).map(item => {
+              if (typeof item === 'object' && item !== null) {
+                const meta = [];
+                if (item.tag) meta.push(item.tag);
+                if (item.estimate_bucket) meta.push(item.estimate_bucket + 'm');
+                if (item.recurrence) meta.push(item.recurrence);
+                const metaStr = meta.length > 0 ? ` <span class="template-meta">${meta.join(' | ')}</span>` : '';
+                return `<li>${this.escapeHtml(item.text)}${metaStr}</li>`;
+              }
+              return `<li>${this.escapeHtml(item)}</li>`;
+            }).join('')}
             ${routine.items.length > 5 ? `<li>... and ${routine.items.length - 5} more</li>` : ''}
           </ul>
         ` : ''}
         <div class="routine-actions">
-          <button class="btn-primary btn-sm run-routine-btn">Run Routine</button>
+          <button class="btn-primary btn-sm run-routine-btn">Run ${label}</button>
           <button class="btn-secondary btn-sm edit-routine-btn">Edit</button>
         </div>
-      </li>
-    `).join('');
+      </li>`;
+    }).join('');
 
     // Bind routine events
     document.querySelectorAll('.run-routine-btn').forEach(btn => {
@@ -3171,12 +3354,27 @@ class BattlePlanApp {
 
   renderRoutineItems(items) {
     const list = document.getElementById('routine-items-list');
-    list.innerHTML = items.map((item, index) => `
-      <li>
+    list.innerHTML = items.map((item, index) => {
+      if (typeof item === 'object' && item !== null) {
+        const meta = [];
+        if (item.tag) meta.push(item.tag);
+        if (item.estimate_bucket) meta.push(item.estimate_bucket + 'm');
+        if (item.confidence) meta.push(item.confidence);
+        if (item.recurrence) meta.push(item.recurrence);
+        const score = (item.A != null) ? `Score: ${(item.A*2)+(item.C*2)-item.E+(item.L||0)+(item.M||0)+(item.T||0)}` : '';
+        if (score) meta.push(score);
+        const metaStr = meta.length > 0 ? `<span class="template-meta">${meta.join(' | ')}</span>` : '';
+        const subtaskStr = item.subtasks ? `<span class="template-meta">${item.subtasks.length} subtasks</span>` : '';
+        return `<li>
+          <div><span>${this.escapeHtml(item.text)}</span>${metaStr}${subtaskStr}</div>
+          <button data-index="${index}">&times;</button>
+        </li>`;
+      }
+      return `<li>
         <span>${this.escapeHtml(item)}</span>
         <button data-index="${index}">&times;</button>
-      </li>
-    `).join('');
+      </li>`;
+    }).join('');
 
     list.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => this.removeRoutineItem(parseInt(btn.dataset.index)));
