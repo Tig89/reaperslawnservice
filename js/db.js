@@ -1065,18 +1065,52 @@ class BattlePlanDB {
     });
   }
 
+  /**
+   * Defer a task to tomorrow WITHOUT setting scheduled_for_date.
+   * Used by rerack/auto-schedule overflow so the smart rollover knows
+   * these are "overflow" items, not user-scheduled.
+   */
+  async deferToTomorrow(id) {
+    return this.updateItem(id, {
+      status: 'tomorrow',
+      scheduled_for_date: null,
+      isTop3: false,
+      top3Order: null,
+      top3Date: null,
+      top3Locked: false
+    });
+  }
+
   // ==================== ROLLOVER / DAILY MAINTENANCE ====================
 
+  /**
+   * Smart daily maintenance with capacity-aware rollover.
+   *
+   * Phase 1 (protected - always move to today):
+   *   - Items with dueDate within 7 days
+   *   - Items with scheduled_for_date <= today (user deliberately scheduled)
+   *
+   * Phase 2 (candidates - move if capacity allows, sorted by priority):
+   *   - Tomorrow items WITHOUT scheduled_for_date (rerack/auto-schedule overflow)
+   *   - Highest priority first; items that don't fit stay in tomorrow
+   *
+   * Phase 3: Clear stale Top 3 from previous days
+   */
   async runDailyMaintenance() {
     await this.ready;
     const today = this.getToday();
     const items = await this.getAllItems();
-
+    const usableCapacity = await this.getUsableCapacity();
     const autoClearTop3 = await this.getSetting('top3_auto_clear_daily', true);
 
     let overdueCount = 0;
     let rolledCount = 0;
+    let deferredCount = 0;
     let clearedTop3Count = 0;
+
+    const protectedMoves = [];
+    const candidates = [];
+    const protectedIds = new Set();
 
     for (const item of items) {
       if (item.status === 'done') continue;
@@ -1086,22 +1120,31 @@ class BattlePlanDB {
         overdueCount++;
       }
 
-      // Auto-move scheduled items to today when their date arrives
-      if (item.scheduled_for_date && item.scheduled_for_date <= today && item.status !== 'today') {
-        await this.updateItem(item.id, { status: 'today' });
-        rolledCount++;
-      }
-
-      // Auto-move items to today when due date is within 7 days
+      // Due within 7 days - ALWAYS move to today (protected)
       if (item.dueDate && item.status !== 'today') {
         const now = new Date();
         now.setHours(0, 0, 0, 0);
         const due = new Date(item.dueDate + 'T00:00:00');
         const daysUntilDue = Math.ceil((due - now) / (1000 * 60 * 60 * 24));
         if (daysUntilDue <= 7) {
-          await this.updateItem(item.id, { status: 'today' });
-          rolledCount++;
+          protectedMoves.push(item);
+          protectedIds.add(item.id);
+          continue;
         }
+      }
+
+      // Scheduled for today or earlier - ALWAYS move (user deliberately planned)
+      if (item.scheduled_for_date && item.scheduled_for_date <= today && item.status !== 'today') {
+        if (!protectedIds.has(item.id)) {
+          protectedMoves.push(item);
+          protectedIds.add(item.id);
+        }
+        continue;
+      }
+
+      // Tomorrow items without scheduled_for_date = overflow candidates
+      if (item.status === 'tomorrow' && !item.scheduled_for_date) {
+        candidates.push(item);
       }
 
       // Clear stale Top 3 (from previous days)
@@ -1117,7 +1160,44 @@ class BattlePlanDB {
       }
     }
 
-    return { overdueCount, rolledCount, clearedTop3Count };
+    // Phase 1: Move all protected items to today
+    for (const item of protectedMoves) {
+      await this.updateItem(item.id, { status: 'today', scheduled_for_date: today });
+      rolledCount++;
+    }
+
+    // Phase 2: Capacity-aware rollover of candidates
+    // Calculate how much time is already committed in today
+    const todayItems = await this.getTodayItems();
+    let usedMinutes = 0;
+    for (const ti of todayItems) {
+      if (ti.status !== 'done') {
+        usedMinutes += (await this.getBufferedMinutes(ti)) || 0;
+      }
+    }
+    let remainingCapacity = usableCapacity - usedMinutes;
+
+    // Score and sort candidates by priority (highest first)
+    const scored = await Promise.all(candidates.map(async item => {
+      const scores = this.isRated(item) ? this.calculateScores(item) : { priority_score: 0 };
+      const buffered = (await this.getBufferedMinutes(item)) || 0;
+      return { id: item.id, priority_score: scores.priority_score || 0, bufferedMinutes: buffered, rated: this.isRated(item) };
+    }));
+    scored.sort((a, b) => b.priority_score - a.priority_score);
+
+    // Fill remaining capacity with highest-priority candidates
+    for (const item of scored) {
+      if (item.bufferedMinutes === 0 || item.bufferedMinutes <= remainingCapacity) {
+        await this.updateItem(item.id, { status: 'today', scheduled_for_date: today });
+        remainingCapacity -= item.bufferedMinutes;
+        rolledCount++;
+      } else {
+        // Doesn't fit - stays in tomorrow
+        deferredCount++;
+      }
+    }
+
+    return { overdueCount, rolledCount, deferredCount, clearedTop3Count };
   }
 
   // Alias for backward compatibility

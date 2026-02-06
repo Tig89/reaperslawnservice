@@ -110,8 +110,13 @@ class BattlePlanApp {
   async init() {
     await db.ready;
 
-    // Run rollover on app load
-    await db.runRollover();
+    // Run smart rollover on app load
+    const rolloverResult = await db.runRollover();
+    if (rolloverResult.deferredCount > 0) {
+      setTimeout(() => {
+        this.showToast(`${rolloverResult.rolledCount} task${rolloverResult.rolledCount !== 1 ? 's' : ''} moved to Today, ${rolloverResult.deferredCount} deferred (over capacity)`, 'warning', 5000);
+      }, 500);
+    }
 
     // Load settings
     this.timerDefault = await db.getSetting('timerDefault', 25);
@@ -2828,9 +2833,9 @@ class BattlePlanApp {
       return;
     }
 
-    // Move overflow items to tomorrow
+    // Move overflow items to tomorrow (deferred, not user-scheduled)
     for (const item of result.overflow) {
-      await db.setTomorrow(item.id);
+      await db.deferToTomorrow(item.id);
     }
 
     this._pendingSchedule = null;
@@ -3045,7 +3050,7 @@ class BattlePlanApp {
     }
 
     for (const item of result.overflow) {
-      await db.setTomorrow(item.id);
+      await db.deferToTomorrow(item.id);
     }
 
     this.closeRerackModal();
