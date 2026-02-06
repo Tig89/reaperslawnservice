@@ -1551,10 +1551,11 @@ class BattlePlanApp {
 
     debugLog('log', 'Groq parsed intent:', parsed);
 
+    // Stop voice input BEFORE executing command so response toasts aren't hidden
+    this.stopVoiceInput();
+
     // Execute based on intent
     await this.executeAICommand(parsed, trimmed);
-
-    this.stopVoiceInput();
   }
 
   async getVoiceContext() {
