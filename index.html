@@ -45,8 +45,8 @@
           <span class="hud-item hud-urgency-warning" id="hud-due-warning"><strong id="hud-due-warning-count">0</strong> due 4-7d</span>
         </div>
         <div id="capacity-warning" class="capacity-warning hidden">
-          Over capacity! Tap "Auto-balance" or remove tasks.
-          <button id="auto-balance-btn" class="btn-sm">Auto-balance</button>
+          Over capacity! Tap "Auto Schedule" to rebalance.
+          <button id="auto-balance-btn" class="btn-sm">Auto Schedule</button>
         </div>
       </div>
     </header>
@@ -90,6 +90,7 @@
       <section id="page-today" class="page">
         <p class="page-hint">Your committed tasks for today. Pick your Top 3 priorities and focus on those first.</p>
         <div class="today-actions">
+          <button id="auto-schedule-btn" class="btn-secondary btn-sm">Auto Schedule</button>
           <button id="suggest-top3-btn" class="btn-secondary btn-sm">Suggest Top 3</button>
           <button id="rebuild-top3-btn" class="btn-secondary btn-sm">Rebuild Top 3</button>
           <button id="start-focus-btn" class="btn-primary btn-sm">Start Focus</button>
@@ -651,6 +652,18 @@
     </div>
 
     <!-- Overdue Management Modal -->
+    <div id="schedule-modal" class="overlay hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <h3>Auto Schedule</h3>
+        <p class="modal-hint">Tasks sorted by priority, fitted to your capacity.</p>
+        <div id="schedule-plan-list"></div>
+        <div class="modal-actions">
+          <button id="schedule-apply-btn" class="btn-primary">Move Overflow to Tomorrow</button>
+          <button id="schedule-close-btn" class="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
     <div id="overdue-modal" class="overlay hidden" role="dialog" aria-modal="true">
       <div class="modal-content">
         <h3>Overdue Tasks</h3>

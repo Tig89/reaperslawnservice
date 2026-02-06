@@ -337,7 +337,12 @@ class BattlePlanApp {
     document.getElementById('start-focus-btn').addEventListener('click', () => this.startFocus());
     document.getElementById('suggest-top3-btn').addEventListener('click', () => this.suggestTop3());
     document.getElementById('rebuild-top3-btn').addEventListener('click', () => this.rebuildTop3());
-    document.getElementById('auto-balance-btn').addEventListener('click', () => this.autoBalance());
+    document.getElementById('auto-balance-btn').addEventListener('click', () => this.showAutoSchedule());
+    document.getElementById('auto-schedule-btn').addEventListener('click', () => this.showAutoSchedule());
+
+    // Auto Schedule modal
+    document.getElementById('schedule-apply-btn').addEventListener('click', () => this.applyAutoSchedule());
+    document.getElementById('schedule-close-btn').addEventListener('click', () => this.closeAutoScheduleModal());
 
     // Done page actions
     document.getElementById('archive-old-btn').addEventListener('click', () => this.archiveOldTasks());
@@ -2555,6 +2560,94 @@ class BattlePlanApp {
 
     await this.render();
     await this.updateHUD();
+  }
+
+  // ==================== AUTO-SCHEDULE ====================
+
+  async showAutoSchedule() {
+    const result = await db.autoScheduleToday();
+    this._pendingSchedule = result;
+
+    const modal = document.getElementById('schedule-modal');
+    const listEl = document.getElementById('schedule-plan-list');
+
+    // Build the plan display
+    let html = '';
+
+    // Capacity header
+    html += `<div class="schedule-capacity">Capacity: <strong>${result.usedMinutes}</strong> / ${result.capacity} min</div>`;
+
+    // Keep section
+    if (result.keep.length > 0) {
+      html += `<div class="schedule-section-label schedule-keep-label">Keep Today (${result.keep.reduce((s, i) => s + i.bufferedMinutes, 0)} min)</div>`;
+      for (const item of result.keep) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        const badges = item.badges && item.badges.length > 0 ? ` <span class="schedule-badges">${item.badges.join(' ')}</span>` : '';
+        html += `<div class="schedule-item schedule-item-keep">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}${badges}</span>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+        </div>`;
+      }
+    }
+
+    // Overflow section
+    if (result.overflow.length > 0) {
+      html += `<div class="schedule-section-label schedule-overflow-label">Push to Tomorrow (${result.overflow.reduce((s, i) => s + i.bufferedMinutes, 0)} min)</div>`;
+      for (const item of result.overflow) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        html += `<div class="schedule-item schedule-item-overflow">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}</span>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+        </div>`;
+      }
+    }
+
+    // Unrated section
+    if (result.unrated.length > 0) {
+      html += `<div class="schedule-section-label schedule-unrated-label">Unrated &mdash; score these first (${result.unrated.length})</div>`;
+      for (const item of result.unrated) {
+        html += `<div class="schedule-item schedule-item-unrated">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}</span>
+        </div>`;
+      }
+    }
+
+    // No overflow message
+    if (result.overflow.length === 0 && result.unrated.length === 0) {
+      html += `<div class="schedule-message">Everything fits within capacity. No changes needed.</div>`;
+    }
+
+    listEl.innerHTML = html;
+
+    // Show/hide apply button based on whether there's something to do
+    document.getElementById('schedule-apply-btn').classList.toggle('hidden', result.overflow.length === 0);
+
+    modal.classList.remove('hidden');
+  }
+
+  async applyAutoSchedule() {
+    const result = this._pendingSchedule;
+    if (!result || result.overflow.length === 0) {
+      this.closeAutoScheduleModal();
+      return;
+    }
+
+    // Move overflow items to tomorrow
+    for (const item of result.overflow) {
+      await db.setTomorrow(item.id);
+    }
+
+    this._pendingSchedule = null;
+    this.closeAutoScheduleModal();
+
+    this.showToast(`Moved ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} to Tomorrow`);
+    await this.render();
+    await this.updateHUD();
+  }
+
+  closeAutoScheduleModal() {
+    document.getElementById('schedule-modal').classList.add('hidden');
+    this._pendingSchedule = null;
   }
 
   // ==================== ACTUAL TIME TRACKING ====================

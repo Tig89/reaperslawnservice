@@ -509,6 +509,63 @@ class BattlePlanDB {
     return Math.ceil(buffered / 5) * 5;
   }
 
+  // ==================== AUTO-SCHEDULE ====================
+
+  /**
+   * Auto-schedule today: sort all tasks by priority, fit within capacity,
+   * and identify overflow to push to tomorrow.
+   * Returns { keep: [], overflow: [], unrated: [], usedMinutes, capacity }
+   */
+  async autoScheduleToday() {
+    const todayItems = await this.getTodayItems();
+    const usableCapacity = await this.getUsableCapacity();
+
+    // Separate rated vs unrated
+    const rated = [];
+    const unrated = [];
+
+    for (const item of todayItems) {
+      if (this.isRated(item)) {
+        rated.push(item);
+      } else {
+        unrated.push(item);
+      }
+    }
+
+    // Score and enrich rated items
+    const scored = await Promise.all(rated.map(async item => {
+      const scores = this.calculateScores(item);
+      const bufferedMinutes = await this.getBufferedMinutes(item);
+      const isUrgent = item.C === 5;
+      const isMonster = await this.isMonsterAsync(item);
+      const badges = this.calculateBadges(item);
+      return { ...item, ...scores, bufferedMinutes: bufferedMinutes || 0, isUrgent, isMonster, badges };
+    }));
+
+    // Sort: URGENT first, then by priority_score descending
+    scored.sort((a, b) => {
+      if (a.isUrgent && !b.isUrgent) return -1;
+      if (!a.isUrgent && b.isUrgent) return 1;
+      return (b.priority_score || 0) - (a.priority_score || 0);
+    });
+
+    // Greedy fill: pack highest priority items into capacity
+    const keep = [];
+    const overflow = [];
+    let usedMinutes = 0;
+
+    for (const item of scored) {
+      if (usedMinutes + item.bufferedMinutes <= usableCapacity) {
+        keep.push(item);
+        usedMinutes += item.bufferedMinutes;
+      } else {
+        overflow.push(item);
+      }
+    }
+
+    return { keep, overflow, unrated, usedMinutes, capacity: usableCapacity };
+  }
+
   // ==================== CAPACITY ====================
 
   async getUsableCapacity() {
