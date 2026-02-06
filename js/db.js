@@ -703,12 +703,54 @@ class BattlePlanDB {
 
   // ==================== CAPACITY ====================
 
+  /**
+   * Get today's daily capacity override, or null if not set.
+   * Override is stored as { date, minutes } and only valid for today.
+   */
+  async getDailyCapacityOverride() {
+    const override = await this.getSetting('daily_capacity_override', null);
+    if (!override) return null;
+    // Only valid if the override is for today
+    if (override.date !== this.getToday()) return null;
+    return override.minutes;
+  }
+
+  /**
+   * Set a capacity override for today only.
+   * Pass null to clear the override.
+   */
+  async setDailyCapacityOverride(minutes) {
+    if (minutes === null) {
+      await this.setSetting('daily_capacity_override', null);
+    } else {
+      await this.setSetting('daily_capacity_override', {
+        date: this.getToday(),
+        minutes: Math.max(0, Math.round(minutes))
+      });
+    }
+  }
+
   async getUsableCapacity() {
+    // Check for daily override first
+    const override = await this.getDailyCapacityOverride();
+    if (override !== null) return override;
+
     const isWeekend = this.isWeekend();
     const capacityKey = isWeekend ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
     const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
     const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
 
+    return Math.round(capacity * (1 - slackPercent / 100));
+  }
+
+  /**
+   * Get the default usable capacity (ignoring daily override) for display purposes.
+   */
+  async getDefaultUsableCapacity() {
+    const isWeekend = this.isWeekend();
+    const capacityKey = isWeekend ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
+    const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
+    const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
     return Math.round(capacity * (1 - slackPercent / 100));
   }
 

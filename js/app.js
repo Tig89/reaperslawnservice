@@ -345,6 +345,7 @@ class BattlePlanApp {
     document.getElementById('rebuild-top3-btn').addEventListener('click', () => this.rebuildTop3());
     document.getElementById('auto-balance-btn').addEventListener('click', () => this.showAutoSchedule());
     document.getElementById('auto-schedule-btn').addEventListener('click', () => this.showAutoSchedule());
+    document.getElementById('today-capacity-btn').addEventListener('click', () => this.promptDailyCapacity());
 
     // Auto Schedule modal
     document.getElementById('schedule-apply-btn').addEventListener('click', () => this.applyAutoSchedule());
@@ -824,6 +825,9 @@ class BattlePlanApp {
 
   async renderToday() {
     try {
+      // Update daily capacity display
+      await this.updateTodayCapacityDisplay();
+
       let items = await db.getTodayItems();
       items = await this.getFilteredItems(items);
 
@@ -2709,6 +2713,49 @@ class BattlePlanApp {
 
     await this.render();
     await this.updateHUD();
+  }
+
+  // ==================== DAILY CAPACITY OVERRIDE ====================
+
+  async promptDailyCapacity() {
+    const currentCapacity = await db.getUsableCapacity();
+    const defaultCapacity = await db.getDefaultUsableCapacity();
+    const override = await db.getDailyCapacityOverride();
+
+    const label = override !== null
+      ? `Today's capacity is ${currentCapacity}m (default: ${defaultCapacity}m). Enter new value or 0 to reset:`
+      : `Today's capacity is ${currentCapacity}m. Enter a different value for today:`;
+
+    const input = prompt(label, currentCapacity);
+    if (input === null) return; // cancelled
+
+    const value = parseInt(input, 10);
+    if (isNaN(value) || value < 0) {
+      this.showToast('Enter a valid number of minutes', 'warning');
+      return;
+    }
+
+    if (value === 0 || value === defaultCapacity) {
+      // Reset to default
+      await db.setDailyCapacityOverride(null);
+      this.showToast(`Reset to default (${defaultCapacity}m)`);
+    } else {
+      await db.setDailyCapacityOverride(value);
+      this.showToast(`Today's capacity set to ${value}m`);
+    }
+
+    this.invalidateHudCache();
+    await this.updateHUD(true);
+    await this.updateTodayCapacityDisplay();
+  }
+
+  async updateTodayCapacityDisplay() {
+    const btn = document.getElementById('today-capacity-btn');
+    if (!btn) return;
+    const capacity = await db.getUsableCapacity();
+    const override = await db.getDailyCapacityOverride();
+    document.getElementById('today-capacity-value').textContent = capacity;
+    btn.classList.toggle('overridden', override !== null);
   }
 
   // ==================== AUTO-SCHEDULE ====================

@@ -784,6 +784,37 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ==================== TODAY CAPACITY OVERRIDE ==================== */
+.today-capacity-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--spacing-sm);
+}
+
+.today-capacity-btn {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 4px 12px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.today-capacity-btn:hover,
+.today-capacity-btn:focus {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.today-capacity-btn.overridden {
+  border-color: var(--primary);
+  color: var(--primary);
+  border-style: solid;
+  font-weight: 600;
+}
+
 /* ==================== TODAY ACTIONS ==================== */
 .today-actions {
   display: flex;
