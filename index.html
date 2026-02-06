@@ -271,6 +271,26 @@
         </div>
 
         <div class="settings-section">
+          <h3>AI Voice Assistant</h3>
+          <p class="setting-hint">Enable intelligent voice commands powered by Groq AI. Get a free API key at <a href="https://console.groq.com" target="_blank">console.groq.com</a></p>
+          <div class="setting-row">
+            <label>Enable AI Assistant</label>
+            <input type="checkbox" id="setting-groq-enabled" checked>
+          </div>
+          <p class="setting-hint">When disabled, voice input will add text directly without AI processing.</p>
+          <div class="setting-row">
+            <label>Groq API Key</label>
+            <input type="password" id="setting-groq-api-key" placeholder="gsk_..." autocomplete="off">
+          </div>
+          <div class="setting-row">
+            <button id="save-groq-key-btn" class="btn-primary btn-sm">Save Key</button>
+            <button id="test-groq-key-btn" class="btn-secondary btn-sm">Test</button>
+            <span id="groq-key-status"></span>
+          </div>
+          <p class="setting-hint">Voice commands: "add task...", "go to today", "how many tasks?", "run grocery routine"</p>
+        </div>
+
+        <div class="settings-section">
           <h3>Focus Timer</h3>
           <div class="timer-options">
             <button class="timer-preset" data-minutes="25">25 min</button>
@@ -642,11 +662,16 @@
         </div>
       </div>
     </div>
+
+    <!-- Global Voice Assistant Button -->
+    <button id="global-voice-btn" class="global-voice-btn" aria-label="Voice Assistant" title="Voice Assistant - Ask me anything!">
+      <span class="voice-icon">🎤</span>
+    </button>
   </div>
 
-  <script src="js/db.js" integrity="sha384-wfVDUVcaijMM+MUu4mIJWEB+47THQNhFiylPJdL8hIcNIH3XjkU9y/hyKczwEjbM" crossorigin="anonymous"></script>
-  <script src="js/app.js" integrity="sha384-yR0plTFn7voLv/Sh2a/1m2TrwGyQ00fqP7c3PMycAeKME/6mCCEms3meSgm3xU43" crossorigin="anonymous"></script>
-  <script src="js/voice-assistant.js" integrity="sha384-mKIIavZHeZcTOcScSkQRDROJGRCgiX2lhlrksWh/Mo2cGWJZgMgFjPBu+7rGLBYH" crossorigin="anonymous"></script>
+  <script src="js/groq.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));

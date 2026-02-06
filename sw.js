@@ -10,6 +10,7 @@ const ASSETS_TO_CACHE = [
   `${BASE_PATH}/index.html`,
   `${BASE_PATH}/manifest.json`,
   `${BASE_PATH}/css/styles.css`,
+  `${BASE_PATH}/js/groq.js`,
   `${BASE_PATH}/js/db.js`,
   `${BASE_PATH}/js/app.js`,
   `${BASE_PATH}/js/voice-assistant.js`,

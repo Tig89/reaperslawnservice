@@ -125,6 +125,9 @@ class BattlePlanApp {
     // Load theme preference
     this.loadTheme();
 
+    // Load Groq AI settings
+    this.loadGroqSettings();
+
     // Handle initial page from URL hash (for back button support)
     const hash = window.location.hash.slice(1);
     const validPages = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done', 'routines', 'analytics', 'settings'];
@@ -212,6 +215,93 @@ class BattlePlanApp {
     document.querySelectorAll('.theme-btn').forEach(btn => {
       btn.classList.toggle('active', btn.id === `theme-${savedTheme}`);
     });
+  }
+
+  // ==================== GROQ AI SETTINGS ====================
+
+  loadGroqSettings() {
+    const enabledCheckbox = document.getElementById('setting-groq-enabled');
+    const keyInput = document.getElementById('setting-groq-api-key');
+    const statusSpan = document.getElementById('groq-key-status');
+
+    // Load enabled state
+    enabledCheckbox.checked = groqAssistant.isEnabled();
+
+    if (groqAssistant.hasApiKey()) {
+      // Show masked key
+      keyInput.value = '••••••••••••••••';
+      keyInput.placeholder = 'Key saved (click to change)';
+      statusSpan.textContent = groqAssistant.isEnabled() ? '✓ Configured' : '(Disabled)';
+      statusSpan.style.color = groqAssistant.isEnabled() ? 'var(--success)' : 'var(--text-muted)';
+    } else {
+      keyInput.value = '';
+      statusSpan.textContent = '';
+    }
+  }
+
+  setGroqEnabled(enabled) {
+    groqAssistant.setEnabled(enabled);
+    const statusSpan = document.getElementById('groq-key-status');
+
+    if (groqAssistant.hasApiKey()) {
+      statusSpan.textContent = enabled ? '✓ Configured' : '(Disabled)';
+      statusSpan.style.color = enabled ? 'var(--success)' : 'var(--text-muted)';
+    }
+
+    this.showToast(enabled ? 'AI Assistant enabled' : 'AI Assistant disabled');
+  }
+
+  saveGroqApiKey() {
+    const keyInput = document.getElementById('setting-groq-api-key');
+    const statusSpan = document.getElementById('groq-key-status');
+    const key = keyInput.value.trim();
+
+    // Don't save if it's the masked placeholder
+    if (key === '••••••••••••••••' || key === '') {
+      statusSpan.textContent = 'Please enter an API key';
+      statusSpan.style.color = 'var(--warning)';
+      return;
+    }
+
+    if (!key.startsWith('gsk_')) {
+      statusSpan.textContent = 'Invalid key format (should start with gsk_)';
+      statusSpan.style.color = 'var(--danger)';
+      return;
+    }
+
+    groqAssistant.setApiKey(key);
+    keyInput.value = '••••••••••••••••';
+    statusSpan.textContent = '✓ Saved!';
+    statusSpan.style.color = 'var(--success)';
+    this.showToast('Groq API key saved');
+  }
+
+  async testGroqApiKey() {
+    const statusSpan = document.getElementById('groq-key-status');
+
+    if (!groqAssistant.hasApiKey()) {
+      statusSpan.textContent = 'No API key configured';
+      statusSpan.style.color = 'var(--warning)';
+      return;
+    }
+
+    statusSpan.textContent = 'Testing...';
+    statusSpan.style.color = 'var(--text-secondary)';
+
+    try {
+      const result = await groqAssistant.parseIntent('hello', {});
+      if (result.error && result.error.includes('API')) {
+        statusSpan.textContent = '✗ Invalid key';
+        statusSpan.style.color = 'var(--danger)';
+      } else {
+        statusSpan.textContent = '✓ Working!';
+        statusSpan.style.color = 'var(--success)';
+        this.showToast('Groq AI is ready!');
+      }
+    } catch (err) {
+      statusSpan.textContent = '✗ Connection failed';
+      statusSpan.style.color = 'var(--danger)';
+    }
   }
 
   // ==================== EVENT BINDING ====================
@@ -314,6 +404,16 @@ class BattlePlanApp {
 
     document.getElementById('notification-permission-btn').addEventListener('click', () => {
       this.requestNotificationPermission();
+    });
+
+    // Groq AI settings
+    document.getElementById('setting-groq-enabled').addEventListener('change', (e) => {
+      this.setGroqEnabled(e.target.checked);
+    });
+    document.getElementById('save-groq-key-btn').addEventListener('click', () => this.saveGroqApiKey());
+    document.getElementById('test-groq-key-btn').addEventListener('click', () => this.testGroqApiKey());
+    document.getElementById('setting-groq-api-key').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.saveGroqApiKey();
     });
 
     // Voice input buttons
@@ -1338,11 +1438,16 @@ class BattlePlanApp {
   // ==================== VOICE INPUT ====================
 
   initVoiceInput() {
+    const globalVoiceBtn = document.getElementById('global-voice-btn');
+
     if (!this.voiceSupported) {
       // Hide mic buttons if not supported
       document.querySelectorAll('.voice-btn').forEach(btn => {
         btn.style.display = 'none';
       });
+      if (globalVoiceBtn) {
+        globalVoiceBtn.classList.add('hidden');
+      }
       return;
     }
 
@@ -1375,6 +1480,37 @@ class BattlePlanApp {
     this.speechRecognition.onend = () => {
       this.stopVoiceInput();
     };
+
+    // Set up global voice button
+    if (globalVoiceBtn) {
+      globalVoiceBtn.addEventListener('click', () => {
+        this.startGlobalVoice();
+      });
+    }
+  }
+
+  startGlobalVoice() {
+    if (!this.voiceSupported || !this.speechRecognition) {
+      this.showToast('Voice not supported');
+      return;
+    }
+
+    // Toggle if already listening
+    if (this.isListening) {
+      this.stopVoiceInput();
+      this.showToast('Voice stopped');
+      return;
+    }
+
+    // Start listening without a specific input target
+    this.currentVoiceTarget = null;
+    this.startVoiceInput(null);
+
+    // Update global button state
+    const globalBtn = document.getElementById('global-voice-btn');
+    if (globalBtn) {
+      globalBtn.classList.add('listening');
+    }
   }
 
   startVoiceInput(targetInputId) {
@@ -1422,10 +1558,16 @@ class BattlePlanApp {
     this.isListening = false;
     this.voiceStartLock = false; // Release lock here, after speech ends
 
-    // Update all voice buttons
+    // Update all voice buttons (inline and global)
     document.querySelectorAll('.voice-btn').forEach(btn => {
       btn.classList.remove('listening');
     });
+
+    // Update global voice button
+    const globalBtn = document.getElementById('global-voice-btn');
+    if (globalBtn) {
+      globalBtn.classList.remove('listening');
+    }
 
     // Hide listening toast
     this.hideToast();
@@ -1437,99 +1579,508 @@ class BattlePlanApp {
     }
   }
 
-  handleVoiceResult(transcript) {
+  async handleVoiceResult(transcript) {
     const trimmed = transcript.trim();
 
-    // Try to parse as command first
-    const command = this.parseVoiceCommand(trimmed);
+    // Show processing indicator
+    this.showToast('Processing...', 'listening');
 
-    if (command) {
-      this.executeVoiceCommand(command);
-    } else {
-      // Insert as text into target input
-      const input = document.getElementById(this.currentVoiceTarget);
-      if (input) {
-        // Append to existing text or replace
-        if (input.value.trim()) {
-          input.value = input.value.trim() + ' ' + trimmed;
-        } else {
-          input.value = trimmed;
-        }
-        input.focus();
-        this.showToast('Added: ' + trimmed.substring(0, 30) + (trimmed.length > 30 ? '...' : ''));
-      }
-    }
+    // Get context for AI
+    const context = await this.getVoiceContext();
+
+    // Use Groq to parse the intent
+    const parsed = await groqAssistant.parseIntent(trimmed, context);
+
+    debugLog('log', 'Groq parsed intent:', parsed);
+
+    // Execute based on intent
+    await this.executeAICommand(parsed, trimmed);
 
     this.stopVoiceInput();
   }
 
-  parseVoiceCommand(text) {
-    const lower = text.toLowerCase();
+  async getVoiceContext() {
+    try {
+      const todayItems = await db.getTodayItems();
+      const inboxItems = await db.getInboxItems();
+      const top3Items = await db.getTop3Items();
+      const routines = await db.getAllRoutines();
 
-    // "add task <text>"
-    if (lower.startsWith('add task ')) {
-      return { action: 'add', text: text.substring(9).trim() };
+      return {
+        currentPage: this.currentPage,
+        todayCount: todayItems.length,
+        inboxCount: inboxItems.length,
+        top3Count: top3Items.length,
+        routines: routines.map(r => r.name)
+      };
+    } catch (err) {
+      debugLog('error', 'Error getting voice context', err);
+      return { currentPage: this.currentPage };
     }
-
-    // "mark done <keyword>" or "complete <keyword>"
-    const doneMatch = lower.match(/^(mark done|complete|finish)\s+(.+)$/);
-    if (doneMatch) {
-      return { action: 'done', keyword: doneMatch[2].trim() };
-    }
-
-    // "move <keyword> to tomorrow"
-    const tomorrowMatch = lower.match(/^move\s+(.+)\s+to tomorrow$/);
-    if (tomorrowMatch) {
-      return { action: 'tomorrow', keyword: tomorrowMatch[1].trim() };
-    }
-
-    // "start focus"
-    if (lower === 'start focus' || lower === 'focus mode') {
-      return { action: 'focus' };
-    }
-
-    // No command matched - treat as text
-    return null;
   }
 
-  async executeVoiceCommand(command) {
-    switch (command.action) {
-      case 'add':
-        await db.addItem(command.text);
-        await this.render();
-        this.showToast('Added: ' + command.text.substring(0, 20) + '...');
+  async executeAICommand(parsed, originalText) {
+    const { intent, data } = parsed;
+
+    switch (intent) {
+      case 'add_task':
+        await this.voiceAddTask(data);
         break;
 
-      case 'done':
-        const doneItem = await this.findItemByKeyword(command.keyword);
-        if (doneItem) {
-          await this.setItemStatus(doneItem.id, 'done');
-          this.showToast('Marked done: ' + doneItem.text.substring(0, 20) + '...');
-        } else {
-          this.showToast('No matching task found');
-        }
+      case 'complete_task':
+        await this.voiceCompleteTask(data.keyword);
         break;
 
-      case 'tomorrow':
-        const tmrwItem = await this.findItemByKeyword(command.keyword);
-        if (tmrwItem) {
-          await db.setTomorrow(tmrwItem.id);
-          await this.render();
-          await this.updateHUD();
-          this.showToast('Moved to tomorrow: ' + tmrwItem.text.substring(0, 20) + '...');
-        } else {
-          this.showToast('No matching task found');
-        }
+      case 'move_task':
+        await this.voiceMoveTask(data);
         break;
 
-      case 'focus':
-        this.startFocus();
+      case 'find_task':
+        await this.voiceFindTask(data.keyword);
+        break;
+
+      case 'navigate':
+        await this.voiceNavigate(data.page);
+        break;
+
+      case 'run_routine':
+        await this.voiceRunRoutine(data.routine_name);
+        break;
+
+      case 'get_stats':
+        await this.voiceGetStats(data.stat_type, originalText);
+        break;
+
+      case 'start_focus':
+        this.startFocus(data.minutes);
+        this.showToast(`Focus mode started${data.minutes ? ` for ${data.minutes} min` : ''}`);
+        break;
+
+      case 'stop_focus':
+        this.stopFocus();
+        this.showToast('Focus mode stopped');
+        break;
+
+      case 'help':
+        this.showToast('Try: "add task...", "go to today", "how many tasks today?"');
+        break;
+
+      case 'disabled':
+        // AI is disabled - use simple command parser
+        await this.executeSimpleVoiceCommand(originalText);
+        break;
+
+      case 'unknown':
+      default:
+        // Fall back to inserting as task text or into input
+        await this.voiceFallback(originalText);
         break;
     }
+  }
+
+  async voiceAddTask(data) {
+    if (!data.text) {
+      this.showToast('What task would you like to add?');
+      return;
+    }
+
+    const item = await db.addItem(data.text);
+
+    // Apply any extracted data
+    const updates = {};
+    if (data.scheduled_date) {
+      updates.scheduled_for_date = data.scheduled_date;
+      updates.status = data.scheduled_date === db.getToday() ? 'today' : 'tomorrow';
+    }
+    if (data.due_date) {
+      updates.dueDate = data.due_date;
+    }
+    if (data.estimate_minutes) {
+      updates.estimate_bucket = data.estimate_minutes;
+      updates.confidence = 'medium'; // Default confidence for voice-added
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await db.updateItem(item.id, updates);
+    }
+
+    await this.render();
+    await this.updateHUD();
+
+    let msg = `Added: ${data.text.substring(0, 25)}`;
+    if (data.scheduled_date) msg += ` (${data.scheduled_date === db.getToday() ? 'today' : data.scheduled_date})`;
+    this.showToast(msg);
+  }
+
+  async executeSimpleVoiceCommand(text) {
+    // Smart command parser (no AI) - understands natural phrases
+    const lower = text.toLowerCase().trim();
+    const original = text.trim();
+
+    // ===== COMPLETION PATTERNS =====
+    // "I finished...", "finished...", "did...", "completed...", "I did the...", "just finished..."
+    const donePatterns = [
+      /^(?:i\s+)?(?:just\s+)?(?:finished|completed|did)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i,
+      /^(?:mark\s+)?(?:done|complete|finish)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i,
+      /^(?:the\s+)?(.+?)\s+is\s+(?:done|finished|completed)$/i
+    ];
+    for (const pattern of donePatterns) {
+      const match = lower.match(pattern);
+      if (match) {
+        const keyword = match[1].trim();
+        const item = await this.findItemByKeyword(keyword);
+        if (item) {
+          await this.setItemStatus(item.id, 'done');
+          this.showToast(`Done: ${item.text.substring(0, 25)}...`);
+        } else {
+          this.showToast(`No task found for "${keyword}"`);
+        }
+        return;
+      }
+    }
+
+    // ===== SCHEDULING PATTERNS =====
+    // "tomorrow buy groceries" or "buy groceries tomorrow"
+    if (lower.startsWith('tomorrow ')) {
+      const taskText = original.substring(9).trim();
+      const item = await db.addItem(taskText);
+      await db.setTomorrow(item.id);
+      await this.render();
+      this.showToast(`Tomorrow: ${taskText.substring(0, 25)}...`);
+      return;
+    }
+    if (lower.endsWith(' tomorrow')) {
+      const taskText = original.slice(0, -9).trim();
+      const item = await db.addItem(taskText);
+      await db.setTomorrow(item.id);
+      await this.render();
+      this.showToast(`Tomorrow: ${taskText.substring(0, 25)}...`);
+      return;
+    }
+
+    // "move <task> to tomorrow/today"
+    const moveMatch = lower.match(/^move\s+(?:the\s+)?(.+?)\s+to\s+(today|tomorrow)$/);
+    if (moveMatch) {
+      const keyword = moveMatch[1].trim();
+      const target = moveMatch[2];
+      const item = await this.findItemByKeyword(keyword);
+      if (item) {
+        if (target === 'tomorrow') {
+          await db.setTomorrow(item.id);
+        } else {
+          await db.setToday(item.id);
+        }
+        await this.render();
+        await this.updateHUD();
+        this.showToast(`${target === 'tomorrow' ? 'Tomorrow' : 'Today'}: ${item.text.substring(0, 20)}...`);
+      } else {
+        this.showToast(`No task found for "${keyword}"`);
+      }
+      return;
+    }
+
+    // ===== NAVIGATION PATTERNS =====
+    // "go to...", "show...", "open...", "take me to...", "switch to...", "view..."
+    const navPatterns = [
+      /^(?:go to|show|open|take me to|switch to|view)\s+(?:the\s+)?(?:my\s+)?(inbox|today|tomorrow|done|completed|routines?|settings?)$/i
+    ];
+    for (const pattern of navPatterns) {
+      const match = lower.match(pattern);
+      if (match) {
+        let page = match[1].toLowerCase();
+        // Normalize page names
+        if (page === 'completed') page = 'done';
+        if (page === 'routine') page = 'routines';
+        if (page === 'setting') page = 'settings';
+        this.navigateTo(page);
+        this.showToast(`Navigated to ${page}`);
+        return;
+      }
+    }
+
+    // ===== STATS / QUESTIONS =====
+    // "how many tasks", "what's on my list", "status", "how am I doing"
+    const statsPatterns = [
+      /^(?:how many|what'?s?\s+on|show me|what do i have)/i,
+      /^(?:status|my tasks|task count|how am i doing)/i
+    ];
+    for (const pattern of statsPatterns) {
+      if (pattern.test(lower)) {
+        const stats = await this.gatherFullStats();
+        this.showToast(`Today: ${stats.todayCount} tasks, ${stats.top3Count} in Top 3, ${stats.freeTime} min free`, 'info', 5000);
+        return;
+      }
+    }
+
+    // ===== FIND / SEARCH =====
+    // "find...", "where is...", "search for...", "look for..."
+    const findMatch = lower.match(/^(?:find|where is|search for|look for|locate)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i);
+    if (findMatch) {
+      const keyword = findMatch[1].trim();
+      await this.voiceFindTask(keyword);
+      return;
+    }
+
+    // ===== FOCUS TIMER =====
+    if (/^(?:start\s+)?focus(?:\s+mode)?$/.test(lower) || lower === 'lets focus' || lower === "let's focus") {
+      this.startFocus();
+      this.showToast('Focus mode started');
+      return;
+    }
+    if (/^(?:stop|end|cancel)\s+(?:focus|timer)$/.test(lower) || lower === 'stop' || lower === "i'm done") {
+      this.stopFocus();
+      this.showToast('Focus mode stopped');
+      return;
+    }
+    // "focus for 30 minutes" / "25 minute focus" / "pomodoro"
+    const focusMatch = lower.match(/^(?:focus(?:\s+for)?|start)\s*(\d+)\s*(?:min|minutes?)?$/);
+    const focusMatch2 = lower.match(/^(\d+)\s*(?:min|minutes?)\s*(?:focus|timer)$/);
+    if (focusMatch || focusMatch2) {
+      const mins = parseInt((focusMatch || focusMatch2)[1]);
+      this.startFocus(mins);
+      this.showToast(`Focus: ${mins} minutes`);
+      return;
+    }
+    if (lower === 'pomodoro') {
+      this.startFocus(25);
+      this.showToast('Pomodoro: 25 minutes');
+      return;
+    }
+
+    // ===== RUN ROUTINE =====
+    // "run...", "start routine...", "do my..."
+    const routineMatch = lower.match(/^(?:run|start|do)\s+(?:my\s+)?(?:routine\s+)?(.+?)(?:\s+routine)?$/i);
+    if (routineMatch && !routineMatch[1].match(/^focus|timer$/)) {
+      await this.voiceRunRoutine(routineMatch[1].trim());
+      return;
+    }
+
+    // ===== HELP =====
+    if (/^(?:help|what can i say|commands|options)$/.test(lower)) {
+      this.showToast('Try: "buy milk", "finished groceries", "tomorrow call mom", "go to today"', 'info', 6000);
+      return;
+    }
+
+    // ===== NATURAL TASK ADDITIONS =====
+    // "buy...", "get...", "pick up...", "need to...", "remind me to...", "remember to...", "gotta...", "I need to..."
+    const addPrefixes = [
+      /^(?:add\s+(?:task\s+)?)/i,
+      /^(?:i\s+)?(?:need to|gotta|have to|should|must)\s+/i,
+      /^(?:remind me to|remember to|don't forget to)\s+/i,
+      /^(?:buy|get|pick up|grab|order)\s+/i,
+      /^(?:call|email|text|message|contact)\s+/i,
+      /^(?:schedule|book|plan)\s+/i,
+      /^(?:fix|repair|update|check)\s+/i,
+      /^(?:clean|organize|sort)\s+/i,
+      /^(?:make|create|write|draft)\s+/i,
+      /^(?:pay|send|submit)\s+/i
+    ];
+
+    for (const pattern of addPrefixes) {
+      if (pattern.test(lower)) {
+        // Use original text to preserve casing
+        await db.addItem(original);
+        await this.render();
+        this.showToast(`Added: ${original.substring(0, 30)}...`);
+        return;
+      }
+    }
+
+    // ===== FALLBACK: Add as task =====
+    // Anything not matched is added as a new task
+    await db.addItem(original);
+    await this.render();
+    await this.updateHUD();
+    this.showToast(`Added: ${original.substring(0, 30)}...`);
+  }
+
+  async voiceCompleteTask(keyword) {
+    if (!keyword) {
+      this.showToast('Which task should I complete?');
+      return;
+    }
+
+    const item = await this.findItemByKeyword(keyword);
+    if (item) {
+      await this.setItemStatus(item.id, 'done');
+      this.showToast(`Done: ${item.text.substring(0, 25)}...`);
+    } else {
+      this.showToast(`No task found matching "${keyword}"`);
+    }
+  }
+
+  async voiceMoveTask(data) {
+    if (!data.keyword) {
+      this.showToast('Which task should I move?');
+      return;
+    }
+
+    const item = await this.findItemByKeyword(data.keyword);
+    if (!item) {
+      this.showToast(`No task found matching "${data.keyword}"`);
+      return;
+    }
+
+    if (data.target_name === 'tomorrow' || data.target_date === db.getTomorrow()) {
+      await db.setTomorrow(item.id);
+      this.showToast(`Moved to tomorrow: ${item.text.substring(0, 20)}...`);
+    } else if (data.target_name === 'today' || data.target_date === db.getToday()) {
+      await db.setToday(item.id);
+      this.showToast(`Moved to today: ${item.text.substring(0, 20)}...`);
+    } else if (data.target_date) {
+      await db.updateItem(item.id, { scheduled_for_date: data.target_date });
+      this.showToast(`Scheduled for ${data.target_date}: ${item.text.substring(0, 20)}...`);
+    }
+
+    await this.render();
+    await this.updateHUD();
+  }
+
+  async voiceFindTask(keyword) {
+    if (!keyword) {
+      this.showToast('What task are you looking for?');
+      return;
+    }
+
+    const items = await db.getAllItems();
+    const lower = keyword.toLowerCase();
+    const matches = items.filter(item =>
+      item.status !== 'done' &&
+      (item.text.toLowerCase().includes(lower) ||
+       (item.next_action && item.next_action.toLowerCase().includes(lower)))
+    );
+
+    if (matches.length === 0) {
+      this.showToast(`No tasks found for "${keyword}"`);
+    } else if (matches.length === 1) {
+      const item = matches[0];
+      const location = item.status === 'today' ? 'Today' :
+                       item.status === 'inbox' ? 'Inbox' :
+                       item.status === 'tomorrow' ? 'Tomorrow' : item.status;
+      this.showToast(`Found in ${location}: ${item.text.substring(0, 30)}`);
+      // Navigate to the item's location
+      if (['inbox', 'today', 'tomorrow'].includes(item.status)) {
+        this.navigateTo(item.status);
+      }
+    } else {
+      this.showToast(`Found ${matches.length} tasks matching "${keyword}"`);
+    }
+  }
+
+  async voiceNavigate(page) {
+    const pageMap = {
+      'inbox': 'inbox',
+      'today': 'today',
+      'tomorrow': 'tomorrow',
+      'done': 'done',
+      'completed': 'done',
+      'routines': 'routines',
+      'routine': 'routines',
+      'settings': 'settings',
+      'config': 'settings'
+    };
+
+    const targetPage = pageMap[page?.toLowerCase()] || page;
+
+    if (targetPage && ['inbox', 'today', 'tomorrow', 'done', 'routines', 'settings'].includes(targetPage)) {
+      this.navigateTo(targetPage);
+      this.showToast(`Navigated to ${targetPage}`);
+    } else {
+      this.showToast(`Unknown page: ${page}`);
+    }
+  }
+
+  async voiceRunRoutine(routineName) {
+    if (!routineName) {
+      this.showToast('Which routine should I run?');
+      return;
+    }
+
+    const routines = await db.getAllRoutines();
+    const lower = routineName.toLowerCase();
+
+    // Find routine by name (fuzzy match)
+    const routine = routines.find(r =>
+      r.name.toLowerCase().includes(lower) ||
+      lower.includes(r.name.toLowerCase())
+    );
+
+    if (!routine) {
+      const names = routines.map(r => r.name).join(', ');
+      this.showToast(`Routine not found. Available: ${names || 'none'}`);
+      return;
+    }
+
+    if (routine.items.length === 0) {
+      this.showToast(`${routine.name} has no items`);
+      return;
+    }
+
+    await db.runRoutine(routine.id);
+    this.navigateTo('today');
+    this.showToast(`Added ${routine.items.length} items from ${routine.name}`);
+  }
+
+  async voiceGetStats(statType, originalQuery) {
+    const stats = await this.gatherFullStats();
+
+    // Use AI to generate natural response
+    const response = await groqAssistant.generateStatsResponse(stats, originalQuery);
+
+    // Show stats with longer duration (6 seconds)
+    this.showToast(response, 'info', 6000);
+  }
+
+  async gatherFullStats() {
+    const todayItems = await db.getTodayItems();
+    const inboxItems = await db.getInboxItems();
+    const tomorrowItems = await db.getTomorrowItems();
+    const top3Stats = await db.getTop3Stats();
+    const allItems = await db.getAllItems();
+
+    const completedToday = allItems.filter(i => {
+      if (i.status !== 'done' || !i.updated_at) return false;
+      const doneDate = i.updated_at.split('T')[0];
+      return doneDate === db.getToday();
+    }).length;
+
+    const overdueCount = allItems.filter(i => db.isOverdue(i)).length;
+
+    return {
+      todayCount: todayItems.length,
+      completedToday,
+      inboxCount: inboxItems.length,
+      tomorrowCount: tomorrowItems.length,
+      top3Count: top3Stats.top3Count,
+      top3Minutes: top3Stats.totalBuffered,
+      capacity: top3Stats.usableCapacity,
+      freeTime: Math.max(0, top3Stats.usableCapacity - top3Stats.totalBuffered),
+      overdueCount
+    };
+  }
+
+  async voiceFallback(text) {
+    // If on a page with an input, insert the text
+    const input = document.getElementById(this.currentVoiceTarget);
+    if (input) {
+      if (input.value.trim()) {
+        input.value = input.value.trim() + ' ' + text;
+      } else {
+        input.value = text;
+      }
+      input.focus();
+      this.showToast('Added text to input');
+      return;
+    }
+
+    // Otherwise, add as a new task
+    await db.addItem(text);
+    await this.render();
+    this.showToast(`Added task: ${text.substring(0, 25)}...`);
   }
 
   async findItemByKeyword(keyword) {
-    // Search in current view first
+    // Search in current view first, then all items
     let items;
     if (this.currentPage === 'today') {
       items = await db.getTodayItems();
@@ -1540,13 +2091,28 @@ class BattlePlanApp {
     }
 
     const lower = keyword.toLowerCase();
-    return items.find(item =>
-      item.text.toLowerCase().includes(lower) ||
-      (item.next_action && item.next_action.toLowerCase().includes(lower))
+
+    // First try exact-ish match in current view
+    let found = items.find(item =>
+      item.status !== 'done' &&
+      (item.text.toLowerCase().includes(lower) ||
+       (item.next_action && item.next_action.toLowerCase().includes(lower)))
     );
+
+    // If not found in current view, search all items
+    if (!found) {
+      const allItems = await db.getAllItems();
+      found = allItems.find(item =>
+        item.status !== 'done' &&
+        (item.text.toLowerCase().includes(lower) ||
+         (item.next_action && item.next_action.toLowerCase().includes(lower)))
+      );
+    }
+
+    return found;
   }
 
-  showToast(message, type = 'info') {
+  showToast(message, type = 'info', duration = 3000) {
     let toast = document.getElementById('toast');
     if (!toast) {
       toast = document.createElement('div');
@@ -1557,9 +2123,9 @@ class BattlePlanApp {
     toast.textContent = message;
     toast.className = `toast toast-${type} visible`;
 
-    // Auto-hide after 3 seconds (unless it's listening)
+    // Auto-hide after duration (unless it's listening)
     if (type !== 'listening') {
-      setTimeout(() => this.hideToast(), 3000);
+      setTimeout(() => this.hideToast(), duration);
     }
   }
 
