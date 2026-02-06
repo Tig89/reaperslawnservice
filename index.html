@@ -15,8 +15,8 @@
   <title>Battle Plan</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css" integrity="sha384-LnyJCD283UiSebJa/FQXKiQ+nvfVUjexGTsalgE1DPDnrfH387/EgYmKwLJvelhj" crossorigin="anonymous">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <div id="app">
@@ -349,7 +349,7 @@
 
             <h4>Keyboard Shortcuts</h4>
             <ul class="help-list">
-              <li><strong>T/W/N/S/D</strong> - Move selected task to Today/tomorroW/Next/Someday/Done</li>
+              <li><strong>T/M/N/W/S/D</strong> - Move selected task to Today/toMorrow/Next/Waiting/Someday/Done</li>
               <li><strong>E</strong> - Edit selected task</li>
               <li><strong>Delete/Backspace</strong> - Delete selected task (with undo)</li>
               <li><strong>Escape</strong> - Close any open modal</li>
@@ -672,10 +672,6 @@
   <script src="js/groq.js"></script>
   <script src="js/db.js"></script>
   <script src="js/app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
-    }
-  </script>
+  <script src="js/sw-register.js"></script>
 </body>
 </html>
