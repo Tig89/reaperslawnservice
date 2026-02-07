@@ -32,6 +32,8 @@ const CONSTANTS = {
   DEFAULT_TIMER_MINUTES: 25,
   MONSTER_THRESHOLD_MINUTES: 90,
   NOTIFICATION_CHECK_INTERVAL_MS: 60 * 60 * 1000, // 1 hour
+  TIME_PRESSURE_BASE_INTERVAL_MS: 15 * 60 * 1000, // 15 minutes base
+  TIME_PRESSURE_MIN_INTERVAL_MS: 5 * 60 * 1000,   // 5 minutes when critical
   STORAGE_WARNING_PERCENT: 80,
   VALID_STATUSES: ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'],
   VALID_TAGS: ['Home', 'Army', 'Business', 'Other'],
@@ -90,6 +92,11 @@ class BattlePlanApp {
     // Notification state
     this.notificationsEnabled = localStorage.getItem('battlePlanNotifications') === 'true';
     this.lastNotificationCheck = null;
+
+    // Time pressure state
+    this.timePressureTimer = null;
+    this.lastTimePressureLevel = 'none';
+    this.timePressureDismissedAt = null; // prevent re-prompting too soon
 
     // Score cache for performance
     this.scoreCache = new Map();
@@ -151,6 +158,10 @@ class BattlePlanApp {
 
     // Check periodically (every hour)
     setInterval(() => this.checkDueNotifications(), 60 * 60 * 1000);
+
+    // Start adaptive time-pressure checks
+    setTimeout(() => this.checkTimePressure(), 5000);
+    this.scheduleNextTimePressureCheck();
 
     // Offline/online detection
     this.updateOfflineIndicator();
@@ -391,6 +402,14 @@ class BattlePlanApp {
       db.setSetting('always_plan_slack_percent', parseInt(e.target.value) || 30);
       this.updateHUD();
     });
+    document.getElementById('setting-workday-start').addEventListener('change', (e) => {
+      db.setSetting('workday_start_hour', parseInt(e.target.value) || 8);
+    });
+    document.getElementById('setting-workday-end').addEventListener('change', (e) => {
+      db.setSetting('workday_end_hour', parseInt(e.target.value) || 18);
+      // Re-check time pressure with new end time
+      this.checkTimePressure();
+    });
 
     // Behavior settings
     document.getElementById('setting-top3-clear').addEventListener('change', (e) => {
@@ -556,6 +575,12 @@ class BattlePlanApp {
     document.getElementById('setting-weekend-capacity').value = weekend;
     document.getElementById('setting-slack').value = slack;
 
+    // Workday hours
+    const workdayStart = await db.getSetting('workday_start_hour', 8);
+    const workdayEnd = await db.getSetting('workday_end_hour', 18);
+    document.getElementById('setting-workday-start').value = workdayStart;
+    document.getElementById('setting-workday-end').value = workdayEnd;
+
     // Behavior settings
     const top3Clear = await db.getSetting('top3_auto_clear_daily', true);
     const swipeEnabled = await db.getSetting('enable_swipe_gestures', true);
@@ -675,6 +700,9 @@ class BattlePlanApp {
 
     // Apply to DOM
     this.applyHudCache();
+
+    // Also refresh time pressure indicator (not cached - uses current clock)
+    db.checkTimePressure().then(tp => this.updateTimePressureHUD(tp));
   }
 
   applyHudCache() {
@@ -2409,6 +2437,131 @@ class BattlePlanApp {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }
 
+  // ==================== TIME PRESSURE ====================
+
+  /**
+   * Schedule the next time-pressure check with adaptive interval.
+   * More frequent as the day progresses and pressure increases.
+   */
+  scheduleNextTimePressureCheck() {
+    if (this.timePressureTimer) {
+      clearTimeout(this.timePressureTimer);
+    }
+
+    let interval = CONSTANTS.TIME_PRESSURE_BASE_INTERVAL_MS; // 15 min default
+
+    // Shorten interval based on current pressure
+    if (this.lastTimePressureLevel === 'critical' || this.lastTimePressureLevel === 'overdue') {
+      interval = CONSTANTS.TIME_PRESSURE_MIN_INTERVAL_MS; // 5 min
+    } else if (this.lastTimePressureLevel === 'warning') {
+      interval = 10 * 60 * 1000; // 10 min
+    }
+
+    this.timePressureTimer = setTimeout(() => {
+      this.checkTimePressure();
+      this.scheduleNextTimePressureCheck();
+    }, interval);
+  }
+
+  /**
+   * Proactive time-pressure check. Compares remaining tasks
+   * against remaining hours in the day and prompts rerack if needed.
+   */
+  async checkTimePressure() {
+    const result = await db.checkTimePressure();
+    this.lastTimePressureLevel = result.pressure;
+
+    // Update the HUD time-pressure indicator
+    this.updateTimePressureHUD(result);
+
+    // If no pressure or workday over with no tasks, do nothing more
+    if (result.pressure === 'none') return;
+
+    // Don't re-prompt if dismissed within the last 30 minutes
+    if (this.timePressureDismissedAt) {
+      const elapsed = Date.now() - this.timePressureDismissedAt;
+      if (elapsed < 30 * 60 * 1000) return;
+    }
+
+    // Don't prompt if rerack modal is already open
+    const rerackModal = document.getElementById('rerack-modal');
+    if (rerackModal && !rerackModal.classList.contains('hidden')) return;
+
+    // Only show rerack for warning/critical when there are actual overflow tasks
+    if (result.overflowTasks.length === 0) return;
+
+    // Build a time-aware rerack using remaining day minutes as a constraint
+    const rerackResult = await db.rerackForTimePressure();
+
+    // If rerack shows overflow, trigger the prompt
+    if (rerackResult.overflow.length > 0) {
+      this._rerackCompletedId = null;
+      this._rerackLockedIds = [];
+      this._rerackResult = rerackResult;
+      this.showTimePressurePrompt(result, rerackResult);
+    }
+  }
+
+  /**
+   * Show time-pressure rerack prompt with remaining-day context.
+   */
+  showTimePressurePrompt(pressure, rerackResult) {
+    const headerEl = document.getElementById('rerack-header');
+    const hours = Math.floor(pressure.remainingDayMinutes / 60);
+    const mins = pressure.remainingDayMinutes % 60;
+    const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+    if (pressure.pressure === 'overdue') {
+      headerEl.className = 'rerack-header rerack-overrun';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">Workday ended</div>
+        <div class="rerack-detail">${pressure.overflowMinutes}m of tasks remaining. Move to tomorrow?</div>`;
+    } else if (pressure.pressure === 'critical') {
+      headerEl.className = 'rerack-header rerack-overrun';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">Only ${timeStr} left today</div>
+        <div class="rerack-detail">${pressure.remainingTaskMinutes}m of tasks remaining. ${pressure.overflowMinutes}m won't fit.</div>`;
+    } else {
+      headerEl.className = 'rerack-header rerack-overcap';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">${timeStr} left today</div>
+        <div class="rerack-detail">${pressure.remainingTaskMinutes}m of tasks vs ${pressure.remainingDayMinutes}m available. ${pressure.overflowTasks.length} task${pressure.overflowTasks.length !== 1 ? 's' : ''} won't fit.</div>`;
+    }
+
+    this.renderRerackPlan(rerackResult);
+    document.getElementById('rerack-modal').classList.remove('hidden');
+  }
+
+  /**
+   * Update the HUD time-pressure indicator.
+   */
+  updateTimePressureHUD(result) {
+    const el = document.getElementById('hud-time-pressure');
+    if (!el) return;
+
+    if (result.pressure === 'none' || result.remainingTaskMinutes === 0) {
+      el.style.display = 'none';
+      return;
+    }
+
+    const hours = Math.floor(result.remainingDayMinutes / 60);
+    const mins = result.remainingDayMinutes % 60;
+    const timeStr = hours > 0 ? `${hours}h${mins > 0 ? ` ${mins}m` : ''}` : `${mins}m`;
+
+    el.style.display = '';
+    const countEl = document.getElementById('hud-time-pressure-text');
+    if (countEl) {
+      if (result.pressure === 'overdue') {
+        countEl.textContent = 'day over';
+      } else {
+        countEl.textContent = `${timeStr} left`;
+      }
+    }
+
+    // Color based on pressure
+    el.className = 'hud-item hud-time-pressure hud-time-pressure-' + result.pressure;
+  }
+
   selectItem(id) {
     this.selectedItemId = this.selectedItemId === id ? null : id;
     document.querySelectorAll('.item').forEach(item => {
@@ -3069,6 +3222,8 @@ class BattlePlanApp {
     this._rerackResult = null;
     this._rerackCompletedId = null;
     this._rerackLockedIds = [];
+    // Track dismiss time so time-pressure doesn't re-prompt too soon
+    this.timePressureDismissedAt = Date.now();
   }
 
   // ==================== KEYBOARD SHORTCUTS ====================
