@@ -44,6 +44,9 @@
           <span class="hud-item hud-urgency-urgent" id="hud-due-urgent"><strong id="hud-due-urgent-count">0</strong> due 1-3d</span>
           <span class="hud-item hud-urgency-warning" id="hud-due-warning"><strong id="hud-due-warning-count">0</strong> due 4-7d</span>
         </div>
+        <div class="hud-row" id="hud-time-pressure" style="display:none">
+          <span class="hud-item hud-time-pressure"><strong id="hud-time-pressure-text"></strong></span>
+        </div>
         <div id="capacity-warning" class="capacity-warning hidden">
           Over capacity! Tap "Auto Schedule" to rebalance.
           <button id="auto-balance-btn" class="btn-sm">Auto Schedule</button>
@@ -225,6 +228,31 @@
             <label>Slack buffer (%)</label>
             <input type="number" id="setting-slack" min="0" max="50" value="30">
           </div>
+          <div class="setting-row">
+            <label>Workday start</label>
+            <select id="setting-workday-start">
+              <option value="5">5:00 AM</option>
+              <option value="6">6:00 AM</option>
+              <option value="7">7:00 AM</option>
+              <option value="8" selected>8:00 AM</option>
+              <option value="9">9:00 AM</option>
+              <option value="10">10:00 AM</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label>Workday end</label>
+            <select id="setting-workday-end">
+              <option value="15">3:00 PM</option>
+              <option value="16">4:00 PM</option>
+              <option value="17">5:00 PM</option>
+              <option value="18" selected>6:00 PM</option>
+              <option value="19">7:00 PM</option>
+              <option value="20">8:00 PM</option>
+              <option value="21">9:00 PM</option>
+              <option value="22">10:00 PM</option>
+            </select>
+          </div>
+          <p class="setting-hint">Time-pressure checks use workday end to know when your day is over.</p>
         </div>
 
         <div class="settings-section">

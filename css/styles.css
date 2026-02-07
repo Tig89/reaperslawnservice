@@ -391,6 +391,35 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Time pressure indicator */
+.hud-time-pressure {
+  font-weight: 500;
+}
+
+.hud-time-pressure-warning {
+  color: var(--warning);
+}
+
+.hud-time-pressure-warning strong {
+  color: var(--warning);
+}
+
+.hud-time-pressure-critical {
+  color: var(--danger);
+}
+
+.hud-time-pressure-critical strong {
+  color: var(--danger);
+}
+
+.hud-time-pressure-overdue {
+  color: var(--overdue);
+}
+
+.hud-time-pressure-overdue strong {
+  color: var(--overdue);
+}
+
 /* Overdue task list in modal */
 .overdue-task-list {
   max-height: 300px;

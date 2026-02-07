@@ -18,7 +18,9 @@ const DEFAULT_SETTINGS = {
   weekend_capacity_minutes: 360,
   always_plan_slack_percent: 30,
   auto_roll_tomorrow_to_today: true,
-  top3_auto_clear_daily: true
+  top3_auto_clear_daily: true,
+  workday_start_hour: 8,
+  workday_end_hour: 18
 };
 
 class BattlePlanDB {
@@ -701,6 +703,92 @@ class BattlePlanDB {
     };
   }
 
+  /**
+   * Rerack for time pressure: like rerackAfterCompletion but uses
+   * min(remainingCapacity, remainingDayMinutes) as effective capacity.
+   */
+  async rerackForTimePressure(lockedIds = []) {
+    const todayItems = await this.getTodayItems();
+    const allItems = await this.getAllItems();
+    const usableCapacity = await this.getUsableCapacity();
+    const today = this.getToday();
+    const remainingDayMinutes = await this.getRemainingDayMinutes();
+
+    // Time consumed by done tasks today
+    const doneToday = allItems.filter(i =>
+      i.status === 'done' &&
+      (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))
+    );
+    let consumedMinutes = 0;
+    for (const item of doneToday) {
+      consumedMinutes += item.actual_bucket || item.estimate_bucket || 0;
+    }
+
+    const budgetCapacity = Math.max(0, usableCapacity - consumedMinutes);
+    // Effective capacity is the lesser of budget and clock time
+    const effectiveCapacity = Math.min(budgetCapacity, remainingDayMinutes);
+
+    const remaining = todayItems.filter(i => i.status !== 'done');
+
+    const rated = [];
+    const unrated = [];
+    for (const item of remaining) {
+      if (this.isRated(item)) rated.push(item);
+      else unrated.push(item);
+    }
+
+    const scored = await Promise.all(rated.map(async item => {
+      const scores = this.calculateScores(item);
+      const bufferedMinutes = await this.getBufferedMinutes(item) || 0;
+      const isProtected =
+        (item.dueDate && item.dueDate <= today) ||
+        (item.isTop3 && item.top3Locked) ||
+        lockedIds.includes(item.id);
+      const density = bufferedMinutes > 0
+        ? (scores.priority_score || 0) / bufferedMinutes * (1 + 10 / bufferedMinutes)
+        : (scores.priority_score || 0);
+      return { ...item, ...scores, bufferedMinutes, isProtected, density };
+    }));
+
+    const protectedTasks = scored.filter(i => i.isProtected);
+    const flexible = scored.filter(i => !i.isProtected);
+    flexible.sort((a, b) => b.density - a.density);
+
+    const keep = [];
+    const overflow = [];
+    let usedMinutes = 0;
+
+    for (const item of protectedTasks) {
+      keep.push({ ...item, reason: null });
+      usedMinutes += item.bufferedMinutes;
+    }
+
+    for (const item of flexible) {
+      if (usedMinutes + item.bufferedMinutes <= effectiveCapacity) {
+        keep.push({ ...item, reason: null });
+        usedMinutes += item.bufferedMinutes;
+      } else {
+        let reason = 'not enough time left today';
+        if (item.density < 0.15) reason = 'low impact per minute';
+        else if (item.bufferedMinutes > effectiveCapacity * 0.7) reason = 'too long for remaining time';
+        overflow.push({ ...item, reason });
+      }
+    }
+
+    const protectedMinutes = protectedTasks.reduce((s, i) => s + i.bufferedMinutes, 0);
+    const protectedOverflow = protectedMinutes > effectiveCapacity;
+
+    return {
+      keep, overflow, unrated,
+      overrunMinutes: 0,
+      remainingCapacity: effectiveCapacity,
+      usableCapacity,
+      consumedMinutes,
+      completedItem: null,
+      protectedOverflow
+    };
+  }
+
   // ==================== CAPACITY ====================
 
   /**
@@ -752,6 +840,96 @@ class BattlePlanDB {
     const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
     const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
     return Math.round(capacity * (1 - slackPercent / 100));
+  }
+
+  /**
+   * Get minutes remaining in the workday from now until workday_end_hour.
+   * Returns 0 if the workday is already over.
+   */
+  async getRemainingDayMinutes() {
+    const endHour = await this.getSetting('workday_end_hour', DEFAULT_SETTINGS.workday_end_hour);
+    const now = new Date();
+    const endOfDay = new Date(now);
+    endOfDay.setHours(endHour, 0, 0, 0);
+
+    const remainingMs = endOfDay - now;
+    return Math.max(0, Math.round(remainingMs / 60000));
+  }
+
+  /**
+   * Check time pressure: compare remaining task time vs remaining day time.
+   * Returns { pressure, remainingDayMinutes, remainingTaskMinutes, overflowMinutes, overflowTasks }
+   * pressure: 'none' | 'warning' | 'critical' | 'overdue'
+   */
+  async checkTimePressure() {
+    const remainingDayMinutes = await this.getRemainingDayMinutes();
+    const todayItems = await this.getTodayItems();
+    const today = this.getToday();
+    const allItems = await this.getAllItems();
+
+    // Calculate time already consumed by done tasks today
+    const doneToday = allItems.filter(i =>
+      i.status === 'done' &&
+      (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))
+    );
+    let consumedMinutes = 0;
+    for (const item of doneToday) {
+      consumedMinutes += item.actual_bucket || item.estimate_bucket || 0;
+    }
+
+    // Calculate remaining task time (not-done today items)
+    let remainingTaskMinutes = 0;
+    const remainingTasks = [];
+    for (const item of todayItems) {
+      if (item.status === 'done') continue;
+      const buffered = await this.getBufferedMinutes(item);
+      const minutes = buffered || item.estimate_bucket || 0;
+      remainingTaskMinutes += minutes;
+      remainingTasks.push({ ...item, bufferedMinutes: minutes });
+    }
+
+    const overflowMinutes = Math.max(0, remainingTaskMinutes - remainingDayMinutes);
+
+    // Determine pressure level
+    let pressure = 'none';
+    if (remainingDayMinutes === 0 && remainingTaskMinutes > 0) {
+      pressure = 'overdue'; // workday is over but tasks remain
+    } else if (remainingDayMinutes > 0 && remainingTaskMinutes > remainingDayMinutes) {
+      const ratio = remainingTaskMinutes / remainingDayMinutes;
+      pressure = ratio > 1.5 ? 'critical' : 'warning';
+    }
+
+    // Identify which tasks overflow (lowest priority first)
+    const scored = [];
+    for (const item of remainingTasks) {
+      if (this.isRated(item)) {
+        const scores = this.calculateScores(item);
+        scored.push({ ...item, priority_score: scores.priority_score || 0 });
+      } else {
+        scored.push({ ...item, priority_score: 0 });
+      }
+    }
+    scored.sort((a, b) => (b.priority_score || 0) - (a.priority_score || 0));
+
+    // Greedy fill by priority, overflow is what doesn't fit
+    const overflowTasks = [];
+    let filled = 0;
+    for (const item of scored) {
+      if (filled + item.bufferedMinutes <= remainingDayMinutes) {
+        filled += item.bufferedMinutes;
+      } else {
+        overflowTasks.push(item);
+      }
+    }
+
+    return {
+      pressure,
+      remainingDayMinutes,
+      remainingTaskMinutes,
+      consumedMinutes,
+      overflowMinutes,
+      overflowTasks
+    };
   }
 
   // ==================== TODAY LOGIC ====================
@@ -1722,7 +1900,8 @@ class BattlePlanDB {
 
   static ALLOWED_SETTINGS_KEYS = new Set([
     'timerDefault', 'weekday_capacity_minutes', 'weekend_capacity_minutes',
-    'always_plan_slack_percent', 'auto_roll_tomorrow_to_today', 'top3_auto_clear_daily'
+    'always_plan_slack_percent', 'auto_roll_tomorrow_to_today', 'top3_auto_clear_daily',
+    'workday_start_hour', 'workday_end_hour'
   ]);
 
   static VALID_STATUSES = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'];
