@@ -231,7 +231,10 @@ class BattlePlanApp {
   }
 
   loadTheme() {
-    const savedTheme = localStorage.getItem('battlePlanTheme') || 'dark';
+    let savedTheme = localStorage.getItem('battlePlanTheme') || 'dark';
+    // Fallback removed themes to dark
+    const validThemes = ['dark', 'light', 'matrix', 'win98'];
+    if (!validThemes.includes(savedTheme)) savedTheme = 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
 
     // Update button states
@@ -429,7 +432,6 @@ class BattlePlanApp {
     document.getElementById('theme-light').addEventListener('click', () => this.setTheme('light'));
     document.getElementById('theme-matrix').addEventListener('click', () => this.setTheme('matrix'));
     document.getElementById('theme-win98').addEventListener('click', () => this.setTheme('win98'));
-    document.getElementById('theme-system').addEventListener('click', () => this.setTheme('system'));
 
     // Notification settings
     document.getElementById('setting-notifications').addEventListener('change', (e) => {

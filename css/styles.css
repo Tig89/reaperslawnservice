@@ -1438,30 +1438,6 @@
   }
 }
 
-/* System preference auto theme */
-@media (prefers-color-scheme: light) {
-  [data-theme="system"] {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f0f0f0;
-    --bg-card: #e0e0e0;
-    --accent: #c0392b;
-    --accent-hover: #e74c3c;
-    --accent-secondary: #2980b9;
-    --text-primary: #1a1a1a;
-    --text-secondary: #4a4a4a;
-    --text-muted: #7a7a7a;
-    --success: #27ae60;
-    --warning: #f39c12;
-    --danger: #c0392b;
-    --overdue: #c0392b;
-    --urgent: #c0392b;
-    --critical: #d35400;
-    --monster: #8e44ad;
-    --leverage: #27ae60;
-    --friction: #d35400;
-  }
-}
-
 html {
   font-size: 16px;
   -webkit-tap-highlight-color: transparent;
