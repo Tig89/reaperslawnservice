@@ -1700,7 +1700,7 @@ class BattlePlanApp {
 
   /** Start always-on background listening for the wake phrase "Hey Battle" */
   startWakeWord() {
-    if (!this.voiceSupported) return;
+    if (!this.voiceSupported || !this.wakeWordEnabled) return;
     if (this.wakeWordActive) return;
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1758,6 +1758,9 @@ class BattlePlanApp {
       // Auto-restart if wake word is still enabled (recognition stops after silence)
       if (this.wakeWordEnabled && this.wakeWordActive) {
         setTimeout(() => this.restartWakeWord(), 300);
+      } else {
+        // Ensure badge is hidden when not restarting
+        document.getElementById('wake-word-indicator')?.classList.add('hidden');
       }
     };
 
