@@ -342,9 +342,20 @@
 
         <div class="settings-section">
           <h3>Data Backup</h3>
-          <button id="export-btn" class="btn-secondary">Export JSON</button>
-          <button id="import-btn" class="btn-secondary">Import JSON</button>
-          <input type="file" id="import-file" accept=".json" hidden>
+          <div id="backup-location-row" class="setting-row" style="display:none">
+            <label>Backup file</label>
+            <span id="backup-location-name" class="setting-hint">Not set</span>
+          </div>
+          <div class="setting-row">
+            <button id="set-backup-btn" class="btn-secondary">Set Backup Location</button>
+            <button id="export-btn" class="btn-secondary">Export Now</button>
+          </div>
+          <p class="setting-hint" id="backup-hint">Pick a file location once — exports will always save there.</p>
+          <div class="setting-row">
+            <button id="import-btn" class="btn-secondary">Import JSON</button>
+            <input type="file" id="import-file" accept=".json" hidden>
+          </div>
+          <div id="backup-status" class="setting-hint hidden"></div>
           <div id="storage-info" class="storage-info">
             <span>Storage: </span><span id="storage-usage">Calculating...</span>
           </div>
