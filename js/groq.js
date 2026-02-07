@@ -57,7 +57,7 @@ class GroqAssistant {
 Parse the user's voice input and return a JSON object with the intent and extracted data.
 
 Available intents:
-- "add_task": Add a new task. Extract: text, scheduled_date (YYYY-MM-DD or null), due_date (YYYY-MM-DD or null), estimate_minutes (15/30/60/90/120/180 or null)
+- "add_task": Add a new task. Extract: text (the task description WITHOUT date/time/recurrence words), scheduled_date (YYYY-MM-DD or null), due_date (YYYY-MM-DD or null), estimate_minutes (15/30/60/90/120/180 or null), recurrence (null/"daily"/"weekly"/"monthly"), recurrence_day (0-6 for weekly where 0=Sunday, 1-31 for monthly, null otherwise), tag ("Home"/"Army"/"Business"/"Other" or null - infer from context if obvious)
 - "complete_task": Mark a task done. Extract: keyword (search term to find the task)
 - "move_task": Move task to another day. Extract: keyword, target_date (YYYY-MM-DD), target_name ("today"/"tomorrow"/date)
 - "find_task": Search for a task. Extract: keyword
@@ -75,6 +75,20 @@ Date parsing rules:
 - "next monday", "this friday", etc = calculate the actual date
 - "in 3 days" = calculate date
 
+Recurrence parsing rules:
+- "every day"/"daily" = recurrence: "daily"
+- "every monday" = recurrence: "weekly", recurrence_day: 1
+- "every friday" = recurrence: "weekly", recurrence_day: 5
+- "every month"/"monthly" = recurrence: "monthly"
+- "every 15th" = recurrence: "monthly", recurrence_day: 15
+- When recurrence is set, scheduled_date should be the NEXT occurrence
+
+Tag inference rules:
+- Lawn, house, cleaning, cooking, repair = "Home"
+- PT, drill, formation, army = "Army"
+- Client, invoice, business, money, marketing = "Business"
+- If unsure, use null (not "Other")
+
 Time estimate mapping:
 - "quick"/"small"/"5 min"/"10 min"/"15 min" = 15
 - "half hour"/"30 min" = 30
@@ -91,7 +105,7 @@ Current context:
 - Available routines: ${context.routines?.join(', ') || 'none'}
 
 Respond ONLY with valid JSON, no explanation. Example:
-{"intent": "add_task", "data": {"text": "Buy groceries", "scheduled_date": "${today}", "due_date": null, "estimate_minutes": 30}}`;
+{"intent": "add_task", "data": {"text": "Mow lawn", "scheduled_date": "2026-02-13", "due_date": null, "estimate_minutes": 60, "recurrence": "weekly", "recurrence_day": 5, "tag": "Home"}}`;
 
     // Check if AI is enabled and configured
     if (!this.shouldUseAI()) {
@@ -136,6 +150,69 @@ Respond ONLY with valid JSON, no explanation. Example:
     } catch (error) {
       console.error('Groq request failed:', error);
       return { intent: 'unknown', data: {}, error: error.message };
+    }
+  }
+
+  /**
+   * Parse a typed task input into structured data (NLP for inbox).
+   * Lighter prompt than parseIntent - only extracts task fields, no command routing.
+   */
+  async parseTaskInput(text) {
+    if (!this.shouldUseAI()) return null;
+
+    const today = new Date().toISOString().split('T')[0];
+    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+
+    const systemPrompt = `Parse this task input and extract structured data. Today is ${today} (${dayOfWeek}).
+
+Return JSON with these fields:
+- text: the task description (strip out date/time/recurrence words)
+- scheduled_date: YYYY-MM-DD or null
+- due_date: YYYY-MM-DD or null (use for deadlines: "by Friday", "due March 1")
+- estimate_minutes: 15/30/60/90/120/180 or null
+- recurrence: null/"daily"/"weekly"/"monthly"
+- recurrence_day: 0-6 for weekly (0=Sun), 1-31 for monthly, null otherwise
+- tag: "Home"/"Army"/"Business" or null (infer from context: lawn/house=Home, PT/drill=Army, client/invoice=Business)
+
+Rules:
+- "every friday" = recurrence:"weekly", recurrence_day:5, scheduled_date=next friday
+- "every day"/"daily" = recurrence:"daily"
+- "tomorrow" = scheduled_date = tomorrow's date
+- "at 3pm" = strip from text (time-of-day not stored yet)
+- Keep the text clean: "Mow lawn every Friday at 3pm" -> text:"Mow lawn"
+
+Respond ONLY with valid JSON.`;
+
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: text }
+          ],
+          temperature: 0.1,
+          max_tokens: 200,
+          response_format: { type: 'json_object' }
+        })
+      });
+
+      if (!response.ok) return null;
+
+      const result = await response.json();
+      const content = result.choices[0]?.message?.content;
+      try {
+        return JSON.parse(content);
+      } catch (e) {
+        return null;
+      }
+    } catch (error) {
+      return null;
     }
   }
 

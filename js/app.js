@@ -110,8 +110,13 @@ class BattlePlanApp {
   async init() {
     await db.ready;
 
-    // Run rollover on app load
-    await db.runRollover();
+    // Run smart rollover on app load
+    const rolloverResult = await db.runRollover();
+    if (rolloverResult.deferredCount > 0) {
+      setTimeout(() => {
+        this.showToast(`${rolloverResult.rolledCount} task${rolloverResult.rolledCount !== 1 ? 's' : ''} moved to Today, ${rolloverResult.deferredCount} deferred (over capacity)`, 'warning', 5000);
+      }, 500);
+    }
 
     // Load settings
     this.timerDefault = await db.getSetting('timerDefault', 25);
@@ -191,6 +196,12 @@ class BattlePlanApp {
     if (navigator.onLine) {
       indicator.classList.add('hidden');
     } else {
+      // Only show if AI is configured (offline doesn't affect the app otherwise)
+      if (groqAssistant.shouldUseAI()) {
+        indicator.textContent = 'AI offline';
+      } else {
+        indicator.textContent = 'Offline';
+      }
       indicator.classList.remove('hidden');
     }
   }
@@ -337,7 +348,13 @@ class BattlePlanApp {
     document.getElementById('start-focus-btn').addEventListener('click', () => this.startFocus());
     document.getElementById('suggest-top3-btn').addEventListener('click', () => this.suggestTop3());
     document.getElementById('rebuild-top3-btn').addEventListener('click', () => this.rebuildTop3());
-    document.getElementById('auto-balance-btn').addEventListener('click', () => this.autoBalance());
+    document.getElementById('auto-balance-btn').addEventListener('click', () => this.showAutoSchedule());
+    document.getElementById('auto-schedule-btn').addEventListener('click', () => this.showAutoSchedule());
+    document.getElementById('today-capacity-btn').addEventListener('click', () => this.promptDailyCapacity());
+
+    // Auto Schedule modal
+    document.getElementById('schedule-apply-btn').addEventListener('click', () => this.applyAutoSchedule());
+    document.getElementById('schedule-close-btn').addEventListener('click', () => this.closeAutoScheduleModal());
 
     // Done page actions
     document.getElementById('archive-old-btn').addEventListener('click', () => this.archiveOldTasks());
@@ -428,6 +445,7 @@ class BattlePlanApp {
 
     // Edit Modal
     document.getElementById('edit-save-btn').addEventListener('click', () => this.saveEditItem());
+    document.getElementById('edit-template-btn').addEventListener('click', () => this.saveAsTemplate());
     document.getElementById('edit-delete-btn').addEventListener('click', () => this.deleteEditItem());
     document.getElementById('edit-cancel-btn').addEventListener('click', () => this.closeEditModal());
 
@@ -477,6 +495,10 @@ class BattlePlanApp {
       btn.addEventListener('click', () => this.completeWithActualTime(parseInt(btn.dataset.bucket)));
     });
     document.getElementById('skip-actual-btn').addEventListener('click', () => this.skipActualTime());
+
+    // Auto-Rack Modal
+    document.getElementById('rerack-apply-btn').addEventListener('click', () => this.applyRerack());
+    document.getElementById('rerack-close-btn').addEventListener('click', () => this.closeRerackModal());
 
     // Routine Modal
     document.getElementById('routine-item-input').addEventListener('keydown', (e) => {
@@ -808,6 +830,9 @@ class BattlePlanApp {
 
   async renderToday() {
     try {
+      // Update daily capacity display
+      await this.updateTodayCapacityDisplay();
+
       let items = await db.getTodayItems();
       items = await this.getFilteredItems(items);
 
@@ -1057,8 +1082,11 @@ class BattlePlanApp {
     if (showTop3Toggle || isTop3) {
       const top3BtnClass = (item.isTop3 || isTop3) ? 'in-top3' : '';
       const top3BtnText = (item.isTop3 || isTop3) ? '- Top 3' : '+ Top 3';
+      const startedClass = item.started_at ? 'started' : '';
+      const startBtnText = item.started_at ? 'Working' : 'Start';
       actionsHtml = `
         <div class="item-actions">
+          <button class="start-work-btn ${startedClass}">${startBtnText}</button>
           <button class="done-btn">Done</button>
           <button class="tomorrow-btn">→ Tomorrow</button>
           <button class="top3-toggle ${top3BtnClass}">${top3BtnText}</button>
@@ -1157,6 +1185,15 @@ class BattlePlanApp {
               this.updateHUD();
             }
           })();
+          return;
+        }
+
+        // Start Work button click
+        const startBtn = e.target.closest('.start-work-btn');
+        if (startBtn) {
+          e.stopPropagation();
+          const id = startBtn.closest('.item').dataset.id;
+          this.startWorkOnTask(id);
           return;
         }
 
@@ -1678,14 +1715,25 @@ class BattlePlanApp {
     const updates = {};
     if (data.scheduled_date) {
       updates.scheduled_for_date = data.scheduled_date;
-      updates.status = data.scheduled_date === db.getToday() ? 'today' : 'tomorrow';
+      const today = db.getToday();
+      const tomorrow = db.getTomorrow();
+      if (data.scheduled_date === today) updates.status = 'today';
+      else if (data.scheduled_date === tomorrow) updates.status = 'tomorrow';
+      else updates.status = 'next';
     }
     if (data.due_date) {
       updates.dueDate = data.due_date;
     }
     if (data.estimate_minutes) {
       updates.estimate_bucket = data.estimate_minutes;
-      updates.confidence = 'medium'; // Default confidence for voice-added
+      updates.confidence = 'medium';
+    }
+    if (data.recurrence) {
+      updates.recurrence = data.recurrence;
+      if (data.recurrence_day != null) updates.recurrence_day = data.recurrence_day;
+    }
+    if (data.tag && CONSTANTS.VALID_TAGS.includes(data.tag)) {
+      updates.tag = data.tag;
     }
 
     if (Object.keys(updates).length > 0) {
@@ -1695,8 +1743,10 @@ class BattlePlanApp {
     await this.render();
     await this.updateHUD();
 
+    // Build descriptive toast message
     let msg = `Added: ${data.text.substring(0, 25)}`;
-    if (data.scheduled_date) msg += ` (${data.scheduled_date === db.getToday() ? 'today' : data.scheduled_date})`;
+    if (data.recurrence) msg += ` (${data.recurrence})`;
+    else if (data.scheduled_date) msg += ` (${data.scheduled_date === db.getToday() ? 'today' : data.scheduled_date})`;
     this.showToast(msg);
   }
 
@@ -2387,14 +2437,138 @@ class BattlePlanApp {
     }
 
     try {
-      await db.addItem(text);
-      input.value = '';
-      await this.renderInbox();
+      // Try NLP smart-parse if AI is enabled and input looks like natural language
+      const parsed = await this.smartParseTask(text);
+
+      if (parsed && parsed.text) {
+        // AI parsed it — create task with extracted metadata
+        const item = await db.addItem(parsed.text);
+        const updates = {};
+
+        if (parsed.scheduled_date) {
+          updates.scheduled_for_date = parsed.scheduled_date;
+          const today = db.getToday();
+          const tomorrow = db.getTomorrow();
+          if (parsed.scheduled_date === today) updates.status = 'today';
+          else if (parsed.scheduled_date === tomorrow) updates.status = 'tomorrow';
+          else updates.status = 'next';
+        }
+        if (parsed.due_date) updates.dueDate = parsed.due_date;
+        if (parsed.estimate_minutes) {
+          updates.estimate_bucket = parsed.estimate_minutes;
+          updates.confidence = 'medium';
+        }
+        if (parsed.recurrence) {
+          updates.recurrence = parsed.recurrence;
+          if (parsed.recurrence_day != null) updates.recurrence_day = parsed.recurrence_day;
+        }
+        if (parsed.tag && CONSTANTS.VALID_TAGS.includes(parsed.tag)) {
+          updates.tag = parsed.tag;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await db.updateItem(item.id, updates);
+        }
+
+        input.value = '';
+
+        // Build feedback message
+        const parts = [parsed.text.substring(0, 25)];
+        if (parsed.recurrence) parts.push(parsed.recurrence);
+        if (parsed.tag) parts.push(parsed.tag);
+        if (parsed.scheduled_date && !parsed.recurrence) parts.push(parsed.scheduled_date);
+        this.showToast(`Smart add: ${parts.join(' | ')}`);
+      } else {
+        // No parse or AI disabled — add as plain text
+        await db.addItem(text);
+        input.value = '';
+      }
+
+      await this.render();
       input.focus();
     } catch (err) {
       debugLog('error', 'Error adding task', err);
       this.showToast('Error adding task. Storage may be full.');
     }
+  }
+
+  /**
+   * Try to NLP-parse task input. Returns parsed data or null.
+   * Only calls AI if input contains temporal/recurrence keywords.
+   */
+  async smartParseTask(text) {
+    // Only attempt NLP if AI is available
+    if (!groqAssistant.shouldUseAI()) return this.regexParseTask(text);
+
+    // Check if input has keywords worth parsing (avoid API calls for "Buy milk")
+    const nlpKeywords = /\b(every|daily|weekly|monthly|tomorrow|today|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|by |due |in \d+ days?|morning|afternoon|evening)\b/i;
+    if (!nlpKeywords.test(text)) return this.regexParseTask(text);
+
+    // Call Groq for smart parsing
+    return await groqAssistant.parseTaskInput(text);
+  }
+
+  /**
+   * Offline regex-based task parser for common patterns.
+   * Handles: "every [day]", "tomorrow", "daily", "weekly"
+   */
+  regexParseTask(text) {
+    const lower = text.toLowerCase();
+    let taskText = text;
+    let recurrence = null;
+    let recurrence_day = null;
+    let scheduled_date = null;
+    let tag = null;
+
+    const dayMap = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+
+    // "every [dayname]"
+    const everyDayMatch = lower.match(/\bevery\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+    if (everyDayMatch) {
+      recurrence = 'weekly';
+      recurrence_day = dayMap[everyDayMatch[1].toLowerCase()];
+      taskText = text.replace(/\s*every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s*/i, ' ').trim();
+      // Calculate next occurrence
+      const today = new Date();
+      let daysUntil = recurrence_day - today.getDay();
+      if (daysUntil <= 0) daysUntil += 7;
+      const next = new Date(today);
+      next.setDate(today.getDate() + daysUntil);
+      scheduled_date = next.toISOString().split('T')[0];
+    }
+
+    // "every day" / "daily"
+    if (!recurrence && /\b(every\s*day|daily)\b/i.test(lower)) {
+      recurrence = 'daily';
+      taskText = text.replace(/\s*(every\s*day|daily)\s*/i, ' ').trim();
+      scheduled_date = db.getToday();
+    }
+
+    // "every month" / "monthly"
+    if (!recurrence && /\b(every\s*month|monthly)\b/i.test(lower)) {
+      recurrence = 'monthly';
+      taskText = text.replace(/\s*(every\s*month|monthly)\s*/i, ' ').trim();
+    }
+
+    // "tomorrow"
+    if (!scheduled_date && /\btomorrow\b/i.test(lower)) {
+      scheduled_date = db.getTomorrow();
+      taskText = taskText.replace(/\s*tomorrow\s*/i, ' ').trim();
+    }
+
+    // Strip time references (not stored yet, but clean the text)
+    taskText = taskText.replace(/\s*at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*/i, ' ').trim();
+
+    // Simple tag inference
+    if (/\b(lawn|mow|house|clean|cook|repair|garage|laundry|dishes)\b/i.test(lower)) tag = 'Home';
+    else if (/\b(pt|drill|formation|army|ruck|range)\b/i.test(lower)) tag = 'Army';
+    else if (/\b(client|invoice|business|money|marketing|website|sales)\b/i.test(lower)) tag = 'Business';
+
+    // Only return parsed data if we found something
+    if (recurrence || scheduled_date || tag) {
+      return { text: taskText || text, scheduled_date, recurrence, recurrence_day, tag, due_date: null, estimate_minutes: null };
+    }
+    return null;
   }
 
   async setItemStatus(id, status) {
@@ -2405,12 +2579,13 @@ class BattlePlanApp {
     await this.saveForUndo(id, `Moved to ${status}`);
 
     if (status === 'done') {
-      // Check if item has estimate - prompt for actual time
-      if (item.estimate_bucket) {
-        this.pendingCompletionId = id;
-        document.getElementById('actual-time-modal').classList.remove('hidden');
-        return;
-      }
+      // Complete immediately - actual time from start/done pair or uses estimate
+      await db.completeTask(id);
+      await this.render();
+      await this.updateHUD();
+      // Check if day needs rebalancing (drift-based)
+      await this.checkDriftRerack(id);
+      return;
     }
 
     let actionDescription = '';
@@ -2557,34 +2732,343 @@ class BattlePlanApp {
     await this.updateHUD();
   }
 
-  // ==================== ACTUAL TIME TRACKING ====================
+  // ==================== DAILY CAPACITY OVERRIDE ====================
 
-  async completeWithActualTime(actualBucket) {
-    if (!this.pendingCompletionId) return;
+  async promptDailyCapacity() {
+    const currentCapacity = await db.getUsableCapacity();
+    const defaultCapacity = await db.getDefaultUsableCapacity();
+    const override = await db.getDailyCapacityOverride();
 
-    await db.completeTask(this.pendingCompletionId, actualBucket);
-    this.pendingCompletionId = null;
-    document.getElementById('actual-time-modal').classList.add('hidden');
+    const label = override !== null
+      ? `Today's capacity is ${currentCapacity}m (default: ${defaultCapacity}m). Enter new value or 0 to reset:`
+      : `Today's capacity is ${currentCapacity}m. Enter a different value for today:`;
 
-    await this.render();
-    await this.updateHUD();
-    this.showUndoToast('Marked Done');
+    const input = prompt(label, currentCapacity);
+    if (input === null) return; // cancelled
+
+    const value = parseInt(input, 10);
+    if (isNaN(value) || value < 0) {
+      this.showToast('Enter a valid number of minutes', 'warning');
+      return;
+    }
+
+    if (value === 0 || value === defaultCapacity) {
+      // Reset to default
+      await db.setDailyCapacityOverride(null);
+      this.showToast(`Reset to default (${defaultCapacity}m)`);
+    } else {
+      await db.setDailyCapacityOverride(value);
+      this.showToast(`Today's capacity set to ${value}m`);
+    }
+
+    this.invalidateHudCache();
+    await this.updateHUD(true);
+    await this.updateTodayCapacityDisplay();
   }
 
-  async skipActualTime() {
-    if (!this.pendingCompletionId) return;
+  async updateTodayCapacityDisplay() {
+    const btn = document.getElementById('today-capacity-btn');
+    if (!btn) return;
+    const capacity = await db.getUsableCapacity();
+    const override = await db.getDailyCapacityOverride();
+    document.getElementById('today-capacity-value').textContent = capacity;
+    btn.classList.toggle('overridden', override !== null);
+  }
 
-    await db.updateItem(this.pendingCompletionId, {
-      status: 'done',
-      isTop3: false,
-      top3Order: null
-    });
-    this.pendingCompletionId = null;
-    document.getElementById('actual-time-modal').classList.add('hidden');
+  // ==================== AUTO-SCHEDULE ====================
 
+  async showAutoSchedule() {
+    const result = await db.autoScheduleToday();
+    this._pendingSchedule = result;
+
+    const modal = document.getElementById('schedule-modal');
+    const listEl = document.getElementById('schedule-plan-list');
+
+    // Build the plan display
+    let html = '';
+
+    // Capacity header
+    html += `<div class="schedule-capacity">Capacity: <strong>${result.usedMinutes}</strong> / ${result.capacity} min</div>`;
+
+    // Keep section
+    if (result.keep.length > 0) {
+      html += `<div class="schedule-section-label schedule-keep-label">Keep Today (${result.keep.reduce((s, i) => s + i.bufferedMinutes, 0)} min)</div>`;
+      for (const item of result.keep) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        const badges = item.badges && item.badges.length > 0 ? ` <span class="schedule-badges">${item.badges.join(' ')}</span>` : '';
+        html += `<div class="schedule-item schedule-item-keep">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}${badges}</span>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+        </div>`;
+      }
+    }
+
+    // Overflow section
+    if (result.overflow.length > 0) {
+      html += `<div class="schedule-section-label schedule-overflow-label">Push to Tomorrow (${result.overflow.reduce((s, i) => s + i.bufferedMinutes, 0)} min)</div>`;
+      for (const item of result.overflow) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        html += `<div class="schedule-item schedule-item-overflow">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}</span>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+        </div>`;
+      }
+    }
+
+    // Unrated section
+    if (result.unrated.length > 0) {
+      html += `<div class="schedule-section-label schedule-unrated-label">Unrated &mdash; score these first (${result.unrated.length})</div>`;
+      for (const item of result.unrated) {
+        html += `<div class="schedule-item schedule-item-unrated">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}</span>
+        </div>`;
+      }
+    }
+
+    // No overflow message
+    if (result.overflow.length === 0 && result.unrated.length === 0) {
+      html += `<div class="schedule-message">Everything fits within capacity. No changes needed.</div>`;
+    }
+
+    listEl.innerHTML = html;
+
+    // Show/hide apply button based on whether there's something to do
+    document.getElementById('schedule-apply-btn').classList.toggle('hidden', result.overflow.length === 0);
+
+    modal.classList.remove('hidden');
+  }
+
+  async applyAutoSchedule() {
+    const result = this._pendingSchedule;
+    if (!result || result.overflow.length === 0) {
+      this.closeAutoScheduleModal();
+      return;
+    }
+
+    // Move overflow items to tomorrow (deferred, not user-scheduled)
+    for (const item of result.overflow) {
+      await db.deferToTomorrow(item.id);
+    }
+
+    this._pendingSchedule = null;
+    this.closeAutoScheduleModal();
+
+    this.showToast(`Moved ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} to Tomorrow`);
     await this.render();
     await this.updateHUD();
-    this.showUndoToast('Marked Done');
+  }
+
+  closeAutoScheduleModal() {
+    document.getElementById('schedule-modal').classList.add('hidden');
+    this._pendingSchedule = null;
+  }
+
+  // ==================== START WORK ====================
+
+  /**
+   * Start work on a task - records started_at for accurate calibration.
+   * This is the optional "truth signal" - most tasks just use Done.
+   */
+  async startWorkOnTask(id) {
+    await db.startWork(id);
+    const item = await db.getItem(id);
+    this.showToast(`Started: ${item.text.substring(0, 40)}`, 'success', 2000);
+    await this.render();
+  }
+
+  // ==================== AUTO-RACK (drift-based rebalance) ====================
+
+  /**
+   * After a task completion, check schedule drift and whether today is
+   * over capacity. Trigger rerack if needed.
+   *
+   * Drift = elapsed time since first completion > sum of completed estimates.
+   * Over capacity = remaining tasks don't fit after accounting for consumed time.
+   */
+  async checkDriftRerack(completedId) {
+    const item = await db.getItem(completedId);
+
+    // Only check for tasks with estimates
+    if (!item || !item.estimate_bucket) {
+      this.showUndoToast('Marked Done');
+      return;
+    }
+
+    // Check drift
+    const drift = await db.checkScheduleDrift();
+
+    // Run rerack to see if we're over capacity
+    const result = await db.rerackAfterCompletion(completedId);
+
+    // Only trigger if there's actual overflow
+    if (result.overflow.length === 0) {
+      // No overflow, but warn if drifting
+      if (drift && drift.drifting) {
+        this.showToast(`Marked Done. Running ${drift.driftMinutes}m behind schedule.`, 'warning', 4000);
+      } else {
+        this.showUndoToast('Marked Done');
+      }
+      return;
+    }
+
+    // Store rerack state
+    this._rerackCompletedId = completedId;
+    this._rerackLockedIds = [];
+    this._rerackResult = result;
+
+    // Show the rebalance prompt
+    this.showRerackPrompt(result, drift);
+  }
+
+  /**
+   * Show rerack prompt with drift info when available.
+   */
+  showRerackPrompt(result, drift) {
+    const headerEl = document.getElementById('rerack-header');
+    const overMinutes = Math.max(0, result.consumedMinutes - result.usableCapacity);
+    const ci = result.completedItem;
+
+    if (drift && drift.drifting) {
+      // Behind schedule - show drift info
+      headerEl.className = 'rerack-header rerack-overrun';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">${drift.driftMinutes}m behind schedule</div>
+        <div class="rerack-detail">${overMinutes > 0 ? overMinutes + 'm over capacity. ' : ''}${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit today.</div>`;
+    } else if (ci && ci.actual_bucket > ci.estimate_bucket) {
+      // Task ran over estimate (from Start Work timing)
+      headerEl.className = 'rerack-header rerack-overrun';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">Last task took ${ci.actual_bucket}m (planned ${ci.estimate_bucket}m)</div>
+        <div class="rerack-detail">${overMinutes > 0 ? overMinutes + 'm over capacity. ' : ''}${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit.</div>`;
+    } else {
+      // Over capacity overall
+      headerEl.className = 'rerack-header rerack-overcap';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">${overMinutes > 0 ? overMinutes + 'm over capacity' : 'At capacity'}</div>
+        <div class="rerack-detail">${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit today.</div>`;
+    }
+
+    this.renderRerackPlan(result);
+    document.getElementById('rerack-modal').classList.remove('hidden');
+  }
+
+  /**
+   * Render the rerack plan: keep today / move to tomorrow with lock toggles
+   */
+  renderRerackPlan(result) {
+    const listEl = document.getElementById('rerack-plan-list');
+    let html = '';
+
+    // Remaining capacity bar
+    html += `<div class="schedule-capacity">Remaining: <strong>${result.remainingCapacity}</strong>m of ${result.usableCapacity}m capacity (${result.consumedMinutes}m used)</div>`;
+
+    // Keep today section
+    if (result.keep.length > 0) {
+      const keepMin = result.keep.reduce((s, i) => s + i.bufferedMinutes, 0);
+      html += `<div class="schedule-section-label schedule-keep-label">Staying Today (${keepMin}m)</div>`;
+      for (const item of result.keep) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        const protectedBadge = item.isProtected ? '<span class="rerack-protected-badge">protected</span>' : '';
+        html += `<div class="schedule-item schedule-item-keep">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}${protectedBadge}</span>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+        </div>`;
+      }
+    }
+
+    // Move to tomorrow section with lock toggles
+    if (result.overflow.length > 0) {
+      const overflowMin = result.overflow.reduce((s, i) => s + i.bufferedMinutes, 0);
+      html += `<div class="schedule-section-label schedule-overflow-label">Move to Tomorrow (${overflowMin}m)</div>`;
+      for (const item of result.overflow) {
+        const score = item.priority_score != null ? item.priority_score : '?';
+        const isLocked = this._rerackLockedIds.includes(item.id);
+        html += `<div class="schedule-item schedule-item-overflow">
+          <div class="schedule-item-text">
+            ${this.escapeHtml(item.text)}
+            <div class="rerack-reason">${item.reason || ''}</div>
+          </div>
+          <span class="schedule-item-meta">${item.bufferedMinutes}m &middot; ${score}pts</span>
+          <button class="rerack-lock-btn ${isLocked ? 'locked' : ''}" data-id="${item.id}">
+            ${isLocked ? 'Locked today' : 'Lock today'}
+          </button>
+        </div>`;
+      }
+    }
+
+    // Unrated
+    if (result.unrated.length > 0) {
+      html += `<div class="schedule-section-label schedule-unrated-label">Unrated (${result.unrated.length})</div>`;
+      for (const item of result.unrated) {
+        html += `<div class="schedule-item schedule-item-unrated">
+          <span class="schedule-item-text">${this.escapeHtml(item.text)}</span>
+        </div>`;
+      }
+    }
+
+    listEl.innerHTML = html;
+
+    // Bind lock toggle buttons
+    listEl.querySelectorAll('.rerack-lock-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.toggleRerackLock(btn.dataset.id));
+    });
+
+    // Update impossible warning
+    const impossibleEl = document.getElementById('rerack-impossible');
+    const applyBtn = document.getElementById('rerack-apply-btn');
+    if (result.protectedOverflow) {
+      impossibleEl.classList.remove('hidden');
+      applyBtn.disabled = true;
+    } else {
+      impossibleEl.classList.add('hidden');
+      applyBtn.disabled = false;
+    }
+  }
+
+  /**
+   * Toggle a task's "lock today" state and recompute rerack
+   */
+  async toggleRerackLock(id) {
+    if (this._rerackLockedIds.includes(id)) {
+      this._rerackLockedIds = this._rerackLockedIds.filter(i => i !== id);
+    } else {
+      this._rerackLockedIds.push(id);
+    }
+
+    // Recompute with updated locks
+    const result = await db.rerackAfterCompletion(
+      this._rerackCompletedId,
+      this._rerackLockedIds
+    );
+    this._rerackResult = result;
+    this.renderRerackPlan(result);
+  }
+
+  /**
+   * Apply the rerack: move overflow tasks to tomorrow
+   */
+  async applyRerack() {
+    const result = this._rerackResult;
+    if (!result || result.overflow.length === 0) {
+      this.closeRerackModal();
+      return;
+    }
+
+    for (const item of result.overflow) {
+      await db.deferToTomorrow(item.id);
+    }
+
+    this.closeRerackModal();
+    this.showToast(`Moved ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} to Tomorrow`);
+    await this.render();
+    await this.updateHUD();
+  }
+
+  closeRerackModal() {
+    document.getElementById('rerack-modal').classList.add('hidden');
+    this._rerackResult = null;
+    this._rerackCompletedId = null;
+    this._rerackLockedIds = [];
   }
 
   // ==================== KEYBOARD SHORTCUTS ====================
@@ -2822,6 +3306,38 @@ class BattlePlanApp {
     document.getElementById('edit-modal').classList.add('hidden');
   }
 
+  async saveAsTemplate() {
+    if (!this.editingItemId) return;
+
+    const item = await db.getItem(this.editingItemId);
+    if (!item) return;
+
+    // Get subtasks for this item
+    const subtasks = await db.getSubtasks(item.id);
+    const templateItem = db.itemToTemplate(item);
+    if (subtasks.length > 0) {
+      templateItem.subtasks = subtasks.map(s => s.text);
+    }
+
+    // Ask which routine to add to, or create a new one
+    const routines = await db.getAllRoutines();
+
+    if (routines.length === 0) {
+      // No routines exist — create one
+      const routine = await db.addRoutine('My Template');
+      routine.items.push(templateItem);
+      await db.updateRoutine(routine.id, { items: routine.items });
+      this.showToast(`Saved to new template "My Template"`);
+    } else {
+      // Show a simple picker using confirm dialog pattern
+      // For now, add to the most recently created routine (or create new)
+      const routine = routines[routines.length - 1];
+      routine.items.push(templateItem);
+      await db.updateRoutine(routine.id, { items: routine.items });
+      this.showToast(`Saved to "${routine.name}" template`);
+    }
+  }
+
   async saveEditItem() {
     if (!this.editingItemId) return;
     this.invalidateHudCache(); // Data is changing
@@ -3016,24 +3532,37 @@ class BattlePlanApp {
       return;
     }
 
-    list.innerHTML = routines.map(routine => `
+    list.innerHTML = routines.map(routine => {
+      const hasTemplates = routine.items.some(i => typeof i === 'object');
+      const label = hasTemplates ? 'Template' : 'Routine';
+      return `
       <li class="routine-item" data-id="${routine.id}">
         <div class="routine-header">
           <span class="routine-name">${this.escapeHtml(routine.name)}</span>
-          <span class="routine-count">${routine.items.length} items</span>
+          <span class="routine-count">${routine.items.length} items${hasTemplates ? ' (template)' : ''}</span>
         </div>
         ${routine.items.length > 0 ? `
           <ul class="routine-checklist">
-            ${routine.items.slice(0, 5).map(item => `<li>${this.escapeHtml(item)}</li>`).join('')}
+            ${routine.items.slice(0, 5).map(item => {
+              if (typeof item === 'object' && item !== null) {
+                const meta = [];
+                if (item.tag) meta.push(item.tag);
+                if (item.estimate_bucket) meta.push(item.estimate_bucket + 'm');
+                if (item.recurrence) meta.push(item.recurrence);
+                const metaStr = meta.length > 0 ? ` <span class="template-meta">${meta.join(' | ')}</span>` : '';
+                return `<li>${this.escapeHtml(item.text)}${metaStr}</li>`;
+              }
+              return `<li>${this.escapeHtml(item)}</li>`;
+            }).join('')}
             ${routine.items.length > 5 ? `<li>... and ${routine.items.length - 5} more</li>` : ''}
           </ul>
         ` : ''}
         <div class="routine-actions">
-          <button class="btn-primary btn-sm run-routine-btn">Run Routine</button>
+          <button class="btn-primary btn-sm run-routine-btn">Run ${label}</button>
           <button class="btn-secondary btn-sm edit-routine-btn">Edit</button>
         </div>
-      </li>
-    `).join('');
+      </li>`;
+    }).join('');
 
     // Bind routine events
     document.querySelectorAll('.run-routine-btn').forEach(btn => {
@@ -3078,12 +3607,27 @@ class BattlePlanApp {
 
   renderRoutineItems(items) {
     const list = document.getElementById('routine-items-list');
-    list.innerHTML = items.map((item, index) => `
-      <li>
+    list.innerHTML = items.map((item, index) => {
+      if (typeof item === 'object' && item !== null) {
+        const meta = [];
+        if (item.tag) meta.push(item.tag);
+        if (item.estimate_bucket) meta.push(item.estimate_bucket + 'm');
+        if (item.confidence) meta.push(item.confidence);
+        if (item.recurrence) meta.push(item.recurrence);
+        const score = (item.A != null) ? `Score: ${(item.A*2)+(item.C*2)-item.E+(item.L||0)+(item.M||0)+(item.T||0)}` : '';
+        if (score) meta.push(score);
+        const metaStr = meta.length > 0 ? `<span class="template-meta">${meta.join(' | ')}</span>` : '';
+        const subtaskStr = item.subtasks ? `<span class="template-meta">${item.subtasks.length} subtasks</span>` : '';
+        return `<li>
+          <div><span>${this.escapeHtml(item.text)}</span>${metaStr}${subtaskStr}</div>
+          <button data-index="${index}">&times;</button>
+        </li>`;
+      }
+      return `<li>
         <span>${this.escapeHtml(item)}</span>
         <button data-index="${index}">&times;</button>
-      </li>
-    `).join('');
+      </li>`;
+    }).join('');
 
     list.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => this.removeRoutineItem(parseInt(btn.dataset.index)));
@@ -3270,6 +3814,9 @@ class BattlePlanApp {
     this.focusTimeRemaining = (minutes || this.timerDefault) * 60;
     this.focusPaused = false;
 
+    // Record start time for accurate calibration
+    await db.startWork(item.id);
+
     document.getElementById('focus-task-name').textContent = item.text;
     this.updateFocusTimerDisplay();
     document.getElementById('focus-overlay').classList.remove('hidden');
@@ -3311,19 +3858,15 @@ class BattlePlanApp {
     this.stopFocus();
 
     if (this.selectedItemId) {
-      const item = await db.getItem(this.selectedItemId);
       const markDone = await this.showConfirm('Focus session complete! Mark task as done?');
       if (markDone) {
-        if (item.estimate_bucket) {
-          this.pendingCompletionId = this.selectedItemId;
-          document.getElementById('actual-time-modal').classList.remove('hidden');
-        } else {
-          await db.updateItem(this.selectedItemId, {
-            status: 'done',
-            isTop3: false,
-            top3Order: null
-          });
-        }
+        // Focus already set started_at, so completeTask will compute accurate actual
+        await db.completeTask(this.selectedItemId);
+        await this.render();
+        await this.updateHUD();
+        await this.checkDriftRerack(this.selectedItemId);
+        this.selectedItemId = null;
+        return;
       }
     }
 
