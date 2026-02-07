@@ -1143,6 +1143,29 @@ mark {
   margin-top: var(--spacing-xs);
 }
 
+.start-work-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.start-work-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.start-work-btn.started {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
 .done-btn {
   padding: var(--spacing-xs) var(--spacing-md);
   background: var(--success);

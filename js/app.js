@@ -1082,8 +1082,11 @@ class BattlePlanApp {
     if (showTop3Toggle || isTop3) {
       const top3BtnClass = (item.isTop3 || isTop3) ? 'in-top3' : '';
       const top3BtnText = (item.isTop3 || isTop3) ? '- Top 3' : '+ Top 3';
+      const startedClass = item.started_at ? 'started' : '';
+      const startBtnText = item.started_at ? 'Working' : 'Start';
       actionsHtml = `
         <div class="item-actions">
+          <button class="start-work-btn ${startedClass}">${startBtnText}</button>
           <button class="done-btn">Done</button>
           <button class="tomorrow-btn">→ Tomorrow</button>
           <button class="top3-toggle ${top3BtnClass}">${top3BtnText}</button>
@@ -1182,6 +1185,15 @@ class BattlePlanApp {
               this.updateHUD();
             }
           })();
+          return;
+        }
+
+        // Start Work button click
+        const startBtn = e.target.closest('.start-work-btn');
+        if (startBtn) {
+          e.stopPropagation();
+          const id = startBtn.closest('.item').dataset.id;
+          this.startWorkOnTask(id);
           return;
         }
 
@@ -2567,12 +2579,12 @@ class BattlePlanApp {
     await this.saveForUndo(id, `Moved to ${status}`);
 
     if (status === 'done') {
-      // Complete immediately - auto-infer actual time from timestamps
+      // Complete immediately - actual time from start/done pair or uses estimate
       await db.completeTask(id);
       await this.render();
       await this.updateHUD();
-      // Check if day needs rebalancing
-      await this.checkRerackNeeded(id);
+      // Check if day needs rebalancing (drift-based)
+      await this.checkDriftRerack(id);
       return;
     }
 
@@ -2851,63 +2863,51 @@ class BattlePlanApp {
     this._pendingSchedule = null;
   }
 
-  // ==================== ACTUAL TIME TRACKING ====================
-
-  async completeWithActualTime(actualBucket) {
-    if (!this.pendingCompletionId) return;
-
-    const completedId = this.pendingCompletionId;
-    const item = await db.getItem(completedId);
-    const estimateBucket = item?.estimate_bucket || 0;
-
-    await db.completeTask(completedId, actualBucket);
-    this.pendingCompletionId = null;
-    document.getElementById('actual-time-modal').classList.add('hidden');
-
-    await this.render();
-    await this.updateHUD();
-
-    // Check if we should trigger rerack
-    await this.checkRerackNeeded(completedId, actualBucket, estimateBucket);
-  }
-
-  async skipActualTime() {
-    if (!this.pendingCompletionId) return;
-
-    await db.updateItem(this.pendingCompletionId, {
-      status: 'done',
-      isTop3: false,
-      top3Order: null
-    });
-    this.pendingCompletionId = null;
-    document.getElementById('actual-time-modal').classList.add('hidden');
-
-    await this.render();
-    await this.updateHUD();
-    this.showUndoToast('Marked Done');
-  }
-
-  // ==================== AUTO-RACK (completion-triggered rebalance) ====================
+  // ==================== START WORK ====================
 
   /**
-   * After a task completion, check if the day is now over capacity
-   * and offer to rerack if so.
+   * Start work on a task - records started_at for accurate calibration.
+   * This is the optional "truth signal" - most tasks just use Done.
    */
-  async checkRerackNeeded(completedId) {
+  async startWorkOnTask(id) {
+    await db.startWork(id);
+    const item = await db.getItem(id);
+    this.showToast(`Started: ${item.text.substring(0, 40)}`, 'success', 2000);
+    await this.render();
+  }
+
+  // ==================== AUTO-RACK (drift-based rebalance) ====================
+
+  /**
+   * After a task completion, check schedule drift and whether today is
+   * over capacity. Trigger rerack if needed.
+   *
+   * Drift = elapsed time since first completion > sum of completed estimates.
+   * Over capacity = remaining tasks don't fit after accounting for consumed time.
+   */
+  async checkDriftRerack(completedId) {
     const item = await db.getItem(completedId);
 
-    // Only check rerack for tasks with estimates (otherwise can't compute capacity)
+    // Only check for tasks with estimates
     if (!item || !item.estimate_bucket) {
       this.showUndoToast('Marked Done');
       return;
     }
+
+    // Check drift
+    const drift = await db.checkScheduleDrift();
 
     // Run rerack to see if we're over capacity
     const result = await db.rerackAfterCompletion(completedId);
 
     // Only trigger if there's actual overflow
     if (result.overflow.length === 0) {
-      this.showUndoToast('Marked Done');
+      // No overflow, but warn if drifting
+      if (drift && drift.drifting) {
+        this.showToast(`Marked Done. Running ${drift.driftMinutes}m behind schedule.`, 'warning', 4000);
+      } else {
+        this.showUndoToast('Marked Done');
+      }
       return;
     }
 
@@ -2917,23 +2917,28 @@ class BattlePlanApp {
     this._rerackResult = result;
 
     // Show the rebalance prompt
-    this.showRerackPrompt(result);
+    this.showRerackPrompt(result, drift);
   }
 
   /**
-   * Show lightweight overrun prompt: "That took Xm (planned Ym). Over by Zm."
-   * with [Auto-fix my day] and [I'll handle it]
+   * Show rerack prompt with drift info when available.
    */
-  showRerackPrompt(result) {
-    const ci = result.completedItem;
+  showRerackPrompt(result, drift) {
     const headerEl = document.getElementById('rerack-header');
-    const overMinutes = result.consumedMinutes - result.usableCapacity;
+    const overMinutes = Math.max(0, result.consumedMinutes - result.usableCapacity);
+    const ci = result.completedItem;
 
-    if (ci && ci.actual_bucket > ci.estimate_bucket) {
-      // Task ran over estimate (auto-detected from timestamps)
+    if (drift && drift.drifting) {
+      // Behind schedule - show drift info
       headerEl.className = 'rerack-header rerack-overrun';
       headerEl.innerHTML = `
-        <div class="rerack-headline">Last task ran over (~${ci.actual_bucket}m vs ${ci.estimate_bucket}m planned)</div>
+        <div class="rerack-headline">${drift.driftMinutes}m behind schedule</div>
+        <div class="rerack-detail">${overMinutes > 0 ? overMinutes + 'm over capacity. ' : ''}${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit today.</div>`;
+    } else if (ci && ci.actual_bucket > ci.estimate_bucket) {
+      // Task ran over estimate (from Start Work timing)
+      headerEl.className = 'rerack-header rerack-overrun';
+      headerEl.innerHTML = `
+        <div class="rerack-headline">Last task took ${ci.actual_bucket}m (planned ${ci.estimate_bucket}m)</div>
         <div class="rerack-detail">${overMinutes > 0 ? overMinutes + 'm over capacity. ' : ''}${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} won't fit.</div>`;
     } else {
       // Over capacity overall
@@ -3809,6 +3814,9 @@ class BattlePlanApp {
     this.focusTimeRemaining = (minutes || this.timerDefault) * 60;
     this.focusPaused = false;
 
+    // Record start time for accurate calibration
+    await db.startWork(item.id);
+
     document.getElementById('focus-task-name').textContent = item.text;
     this.updateFocusTimerDisplay();
     document.getElementById('focus-overlay').classList.remove('hidden');
@@ -3852,10 +3860,11 @@ class BattlePlanApp {
     if (this.selectedItemId) {
       const markDone = await this.showConfirm('Focus session complete! Mark task as done?');
       if (markDone) {
+        // Focus already set started_at, so completeTask will compute accurate actual
         await db.completeTask(this.selectedItemId);
         await this.render();
         await this.updateHUD();
-        await this.checkRerackNeeded(this.selectedItemId);
+        await this.checkDriftRerack(this.selectedItemId);
         this.selectedItemId = null;
         return;
       }

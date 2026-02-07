@@ -1208,69 +1208,35 @@ class BattlePlanDB {
   // ==================== TASK COMPLETION ====================
 
   /**
-   * Infer how long a task actually took by measuring the gap between
-   * the previous completion's timestamp and now.
-   * Returns raw minutes or null if we can't infer (first task of day, long gap).
-   */
-  async inferActualMinutes(itemId) {
-    const today = this.getToday();
-    const allItems = await this.getAllItems();
-
-    // Find done tasks from today with completed_at, excluding the current item
-    const doneToday = allItems
-      .filter(i => i.status === 'done' && i.completed_at && i.completed_at.startsWith(today) && i.id !== itemId)
-      .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
-
-    if (doneToday.length === 0) return null; // First task of the day
-
-    const lastCompletedAt = new Date(doneToday[0].completed_at);
-    const now = new Date();
-    const gapMinutes = Math.round((now - lastCompletedAt) / 60000);
-
-    // Sanity: if gap > 4 hours, probably includes a break
-    if (gapMinutes > 240) return null;
-    if (gapMinutes < 1) return null;
-
-    return gapMinutes;
-  }
-
-  /**
-   * Snap raw minutes to the nearest estimate bucket.
-   */
-  snapToBucket(minutes) {
-    if (!minutes || minutes <= 0) return 15;
-    const buckets = ESTIMATE_BUCKETS; // [15, 30, 60, 90, 120, 180]
-    let closest = buckets[0];
-    let minDiff = Math.abs(minutes - buckets[0]);
-    for (const b of buckets) {
-      if (Math.abs(minutes - b) < minDiff) {
-        minDiff = Math.abs(minutes - b);
-        closest = b;
-      }
-    }
-    return closest;
-  }
-
-  /**
-   * Complete a task. If actual_bucket is not provided, auto-infer from
-   * the gap between the previous completion and now.
-   * Always stores completed_at timestamp on the item.
+   * Complete a task.
+   * - If task has started_at (from Start Work / Focus), compute actual from timestamps
+   * - If actual_bucket is explicitly provided, use that
+   * - Otherwise, use estimate_bucket as the consumed time (for capacity math)
+   * Only records calibration from clean start/done pairs or explicit actual.
    */
   async completeTask(id, actual_bucket = null, skipRecurrence = false) {
     const item = await this.getItem(id);
     if (!item) return null;
 
-    // Auto-infer actual time if not explicitly provided
+    const now = new Date();
     let finalActual = actual_bucket;
-    if (!finalActual && item.estimate_bucket) {
-      const inferredMinutes = await this.inferActualMinutes(id);
-      finalActual = inferredMinutes ? this.snapToBucket(inferredMinutes) : item.estimate_bucket;
+    let calibrate = !!actual_bucket; // explicitly provided = calibrate
+
+    // If task was started (Start Work / Focus), compute actual from timestamps
+    if (!finalActual && item.started_at) {
+      const startedAt = new Date(item.started_at);
+      const rawMinutes = Math.round((now - startedAt) / 60000);
+      if (rawMinutes > 0 && rawMinutes <= 480) { // sanity: max 8 hours
+        finalActual = rawMinutes;
+        calibrate = true; // clean start/done pair = good calibration data
+      }
     }
+
+    // Fall back to estimate for capacity math
     finalActual = finalActual || item.estimate_bucket || 0;
 
-    // Only record calibration if actual was explicitly provided or meaningfully inferred
-    // (skip if actual === estimate, which means we fell back to estimate)
-    if (item.estimate_bucket && finalActual && finalActual !== item.estimate_bucket) {
+    // Only calibrate from clean data (start/done pair or explicit actual)
+    if (calibrate && item.estimate_bucket && finalActual > 0) {
       await this.addCalibrationEntry(item.tag, item.estimate_bucket, finalActual);
     }
 
@@ -1282,12 +1248,68 @@ class BattlePlanDB {
     return this.updateItem(id, {
       status: 'done',
       actual_bucket: finalActual,
-      completed_at: new Date().toISOString(),
+      completed_at: now.toISOString(),
+      started_at: null, // clear start marker
       isTop3: false,
       top3Order: null,
       top3Date: null,
       top3Locked: false
     });
+  }
+
+  /**
+   * Mark a task as "started" - records timestamp for accurate time tracking.
+   */
+  async startWork(id) {
+    return this.updateItem(id, {
+      started_at: new Date().toISOString()
+    });
+  }
+
+  // ==================== SCHEDULE DRIFT ====================
+
+  /**
+   * Check if the day is running behind schedule.
+   *
+   * Drift = elapsed time since first completion - sum of estimates for completed tasks.
+   * If drift > threshold (e.g., 15 min), the user is behind and should rerack.
+   *
+   * Returns { drifting, driftMinutes, elapsedMinutes, completedEstimateMinutes }
+   * or null if we can't compute drift (no completions yet).
+   */
+  async checkScheduleDrift() {
+    const today = this.getToday();
+    const allItems = await this.getAllItems();
+
+    // Find completed tasks today with timestamps
+    const doneToday = allItems.filter(i =>
+      i.status === 'done' &&
+      i.completed_at && i.completed_at.startsWith(today)
+    );
+
+    if (doneToday.length === 0) return null;
+
+    // Sort by completed_at to find first and last
+    doneToday.sort((a, b) => new Date(a.completed_at) - new Date(b.completed_at));
+
+    const firstCompletedAt = new Date(doneToday[0].completed_at);
+    const now = new Date();
+    const elapsedMinutes = Math.round((now - firstCompletedAt) / 60000);
+
+    // Sum of estimates for completed tasks (what we "planned" for those tasks)
+    let completedEstimateMinutes = 0;
+    for (const item of doneToday) {
+      completedEstimateMinutes += item.estimate_bucket || 0;
+    }
+
+    // Drift = how much more time has passed than what the completed tasks should have taken
+    const driftMinutes = elapsedMinutes - completedEstimateMinutes;
+
+    // Threshold: 15 minutes or 25% of completed estimates, whichever is larger
+    const threshold = Math.max(15, completedEstimateMinutes * 0.25);
+    const drifting = driftMinutes > threshold;
+
+    return { drifting, driftMinutes, elapsedMinutes, completedEstimateMinutes };
   }
 
   /**
