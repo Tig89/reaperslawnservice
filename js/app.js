@@ -212,6 +212,7 @@ class BattlePlanApp {
     this.updateOfflineIndicator();
     window.addEventListener('online', () => this.updateOfflineIndicator());
     window.addEventListener('offline', () => this.updateOfflineIndicator());
+    window.addEventListener('ai-online', () => this.updateOfflineIndicator(true));
 
     // Check storage quota
     this.checkStorageQuota();
@@ -247,9 +248,9 @@ class BattlePlanApp {
     }
   }
 
-  updateOfflineIndicator() {
+  updateOfflineIndicator(forceOnline = false) {
     const indicator = document.getElementById('offline-indicator');
-    if (navigator.onLine) {
+    if (navigator.onLine || forceOnline) {
       indicator.classList.add('hidden');
     } else {
       // Only show if AI is configured (offline doesn't affect the app otherwise)

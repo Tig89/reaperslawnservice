@@ -59,6 +59,8 @@ class GroqAssistant {
     });
 
     if (!response.ok) throw new Error(await response.text());
+    // Successful API response confirms we're online
+    window.dispatchEvent(new Event('ai-online'));
     const result = await response.json();
     return result.choices[0]?.message?.content || null;
   }
