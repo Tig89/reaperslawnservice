@@ -1,13 +1,12 @@
 /**
  * Battle Plan - IndexedDB Storage Layer
- * Army-style prioritization with ACE+LMT scoring
- * Version 4 - With proper Today logic, Top 3 per-day, and tiered sorting
+ * ACE+LMT scoring, optimized
+ * Version 4
  */
 
 const DB_NAME = 'BattlePlanDB';
 const DB_VERSION = 4;
 
-// Constants
 const ESTIMATE_BUCKETS = [15, 30, 60, 90, 120, 180];
 const CONFIDENCE_MULTIPLIERS = { high: 1.1, medium: 1.3, low: 1.6 };
 const CONFIDENCE_LEVELS = ['high', 'medium', 'low'];
@@ -24,27 +23,41 @@ const DEFAULT_SETTINGS = {
 };
 
 class BattlePlanDB {
+  /** Default reset values for Top 3 fields — spread into updates to clear top3 state */
+  static CLEAR_TOP3 = { isTop3: false, top3Order: null, top3Date: null, top3Locked: false };
+
   constructor() {
     this.db = null;
     this._renderCache = null;
     this.ready = this.init();
   }
 
+  /** Split items into { rated, unrated } based on whether ACE+LMT scores exist */
+  _partitionByRating(items) {
+    const rated = [], unrated = [];
+    for (const item of items) (this.isRated(item) ? rated : unrated).push(item);
+    return { rated, unrated };
+  }
+
+  /** In-place sort: urgent items (C=5) first, then by score descending */
+  _sortByUrgencyAndScore(items, field = 'priority_score') {
+    items.sort((a, b) => {
+      if (a.isUrgent && !b.isUrgent) return -1;
+      if (!a.isUrgent && b.isUrgent) return 1;
+      return (b[field] || 0) - (a[field] || 0);
+    });
+  }
+
   async init() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
-
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve(this.db);
-      };
+      request.onsuccess = () => { this.db = request.result; resolve(this.db); };
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
         const oldVersion = event.oldVersion;
 
-        // Create or update items store
         if (!db.objectStoreNames.contains('items')) {
           const itemStore = db.createObjectStore('items', { keyPath: 'id' });
           itemStore.createIndex('status', 'status', { unique: false });
@@ -54,25 +67,18 @@ class BattlePlanDB {
           itemStore.createIndex('scheduled_for_date', 'scheduled_for_date', { unique: false });
           itemStore.createIndex('dueDate', 'dueDate', { unique: false });
         } else if (oldVersion < 4) {
-          // Add new indexes for v4
           const tx = event.target.transaction;
           const itemStore = tx.objectStore('items');
-          if (!itemStore.indexNames.contains('scheduled_for_date')) {
+          if (!itemStore.indexNames.contains('scheduled_for_date'))
             itemStore.createIndex('scheduled_for_date', 'scheduled_for_date', { unique: false });
-          }
-          if (!itemStore.indexNames.contains('dueDate')) {
+          if (!itemStore.indexNames.contains('dueDate'))
             itemStore.createIndex('dueDate', 'dueDate', { unique: false });
-          }
         }
 
-        if (!db.objectStoreNames.contains('routines')) {
+        if (!db.objectStoreNames.contains('routines'))
           db.createObjectStore('routines', { keyPath: 'id' });
-        }
-
-        if (!db.objectStoreNames.contains('settings')) {
+        if (!db.objectStoreNames.contains('settings'))
           db.createObjectStore('settings', { keyPath: 'key' });
-        }
-
         if (!db.objectStoreNames.contains('calibration_history')) {
           const calStore = db.createObjectStore('calibration_history', { keyPath: 'id' });
           calStore.createIndex('tag', 'tag', { unique: false });
@@ -84,6 +90,28 @@ class BattlePlanDB {
 
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  // Generic IDB single-request helper
+  _req(store, mode, fn) {
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(store, mode);
+      const r = fn(tx.objectStore(store));
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  }
+
+  // Calculate time consumed by done tasks today
+  _getDoneTodayConsumed(allItems, today) {
+    let consumed = 0;
+    for (const i of allItems) {
+      if (i.status === 'done' &&
+        (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))) {
+        consumed += i.actual_bucket || i.estimate_bucket || 0;
+      }
+    }
+    return consumed;
   }
 
   // ==================== DATE HELPERS ====================
@@ -112,100 +140,46 @@ class BattlePlanDB {
       id: this.generateId(),
       text: text.trim(),
       status: 'inbox',
-      tag: null,
-      next_action: null,
-      // ACE scores
-      A: null,
-      C: null,
-      E: null,
-      // LMT bonuses
-      L: null,
-      M: null,
-      T: null,
-      // Time planning
-      estimate_bucket: null,
-      confidence: null,
-      actual_bucket: null,
-      // Top 3 (with per-day state)
-      isTop3: false,
-      top3Order: null,
-      top3Date: null,
-      top3Locked: false,
-      // Scheduling
-      scheduled_for_date: null,
-      dueDate: null,
-      // Recurrence
-      recurrence: null, // 'daily', 'weekly', 'monthly', or null
-      recurrence_day: null, // 0-6 for weekly (0=Sunday), 1-31 for monthly
-      // Waiting
-      waiting_on: null,
-      // Notes
-      notes: null,
-      // Sub-tasks
-      parent_id: null, // ID of parent task, null if top-level
-      // Timestamps
-      created_at: now,
-      updated_at: now
+      tag: null, next_action: null,
+      A: null, C: null, E: null,
+      L: null, M: null, T: null,
+      estimate_bucket: null, confidence: null, actual_bucket: null,
+      ...BattlePlanDB.CLEAR_TOP3,
+      scheduled_for_date: null, dueDate: null,
+      recurrence: null, recurrence_day: null,
+      waiting_on: null, notes: null, parent_id: null,
+      created_at: now, updated_at: now
     };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.add(item);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(item);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('items', 'readwrite', s => s.add(item));
+    this.scheduleAutoBackup();
+    return item;
   }
 
   async getItem(id) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readonly');
-      const store = tx.objectStore('items');
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    return this._req('items', 'readonly', s => s.get(id));
   }
 
   async updateItem(id, updates) {
     await this.ready;
     const item = await this.getItem(id);
     if (!item) return null;
-
-    const updated = {
-      ...item,
-      ...updates,
-      updated_at: new Date().toISOString()
-    };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.put(updated);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(updated);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    const updated = { ...item, ...updates, updated_at: new Date().toISOString() };
+    await this._req('items', 'readwrite', s => s.put(updated));
+    this.scheduleAutoBackup();
+    return updated;
   }
 
   async batchUpdateItems(updates) {
     await this.ready;
     if (!updates || updates.length === 0) return [];
 
-    // First, read all items that need updating
     const ids = updates.map(u => u.id);
     const items = await new Promise((resolve, reject) => {
       const tx = this.db.transaction('items', 'readonly');
       const store = tx.objectStore('items');
       const results = [];
       let pending = ids.length;
-
       for (const id of ids) {
         const request = store.get(id);
         request.onsuccess = () => {
@@ -216,13 +190,11 @@ class BattlePlanDB {
       }
     });
 
-    // Build a map for quick lookup
     const itemMap = new Map();
     for (const item of items) {
       if (item) itemMap.set(item.id, item);
     }
 
-    // Apply all updates in a single readwrite transaction
     const now = new Date().toISOString();
     const updatedItems = [];
 
@@ -231,84 +203,46 @@ class BattlePlanDB {
       const store = tx.objectStore('items');
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
-
       for (const { id, changes } of updates) {
         const existing = itemMap.get(id);
         if (!existing) continue;
-
-        const updated = {
-          ...existing,
-          ...changes,
-          updated_at: now
-        };
+        const updated = { ...existing, ...changes, updated_at: now };
         store.put(updated);
         updatedItems.push(updated);
       }
     });
 
-    if (updatedItems.length > 0) {
-      this.scheduleAutoBackup();
-    }
-
+    if (updatedItems.length > 0) this.scheduleAutoBackup();
     return updatedItems;
   }
 
   async deleteItem(id) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.delete(id);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(true);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('items', 'readwrite', s => s.delete(id));
+    this.scheduleAutoBackup();
+    return true;
   }
 
-  // Restore a previously deleted item (for undo functionality)
   async restoreItem(item) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.put(item);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(item);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('items', 'readwrite', s => s.put(item));
+    this.scheduleAutoBackup();
+    return item;
   }
 
   async beginRenderCache() {
     await this.ready;
-    this._renderCache = await new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readonly');
-      const store = tx.objectStore('items');
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
+    this._renderCache = await this._req('items', 'readonly', s => s.getAll());
+    this._renderCache = this._renderCache || [];
   }
 
-  endRenderCache() {
-    this._renderCache = null;
-  }
+  endRenderCache() { this._renderCache = null; }
 
   async getAllItems() {
-    if (this._renderCache) {
-      return this._renderCache.map(item => ({ ...item }));
-    }
+    if (this._renderCache) return this._renderCache.map(item => ({ ...item }));
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readonly');
-      const store = tx.objectStore('items');
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
+    const result = await this._req('items', 'readonly', s => s.getAll());
+    return result || [];
   }
 
   // ==================== SUB-TASKS ====================
@@ -327,39 +261,19 @@ class BattlePlanDB {
     const subtask = {
       id: this.generateId(),
       text: text.trim(),
-      status: parent.status, // Inherit parent's status
-      tag: parent.tag, // Inherit parent's tag
-      next_action: null,
+      status: parent.status, tag: parent.tag, next_action: null,
       A: null, C: null, E: null,
       L: null, M: null, T: null,
-      estimate_bucket: null,
-      confidence: null,
-      actual_bucket: null,
-      isTop3: false,
-      top3Order: null,
-      top3Date: null,
-      top3Locked: false,
-      scheduled_for_date: parent.scheduled_for_date,
-      dueDate: parent.dueDate, // Inherit due date
-      recurrence: null,
-      recurrence_day: null,
-      waiting_on: null,
-      notes: null,
-      parent_id: parentId,
-      created_at: now,
-      updated_at: now
+      estimate_bucket: null, confidence: null, actual_bucket: null,
+      ...BattlePlanDB.CLEAR_TOP3,
+      scheduled_for_date: parent.scheduled_for_date, dueDate: parent.dueDate,
+      recurrence: null, recurrence_day: null,
+      waiting_on: null, notes: null, parent_id: parentId,
+      created_at: now, updated_at: now
     };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.add(subtask);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(subtask);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('items', 'readwrite', s => s.add(subtask));
+    this.scheduleAutoBackup();
+    return subtask;
   }
 
   async getSubtaskProgress(parentId) {
@@ -371,13 +285,6 @@ class BattlePlanDB {
 
   // ==================== FULLY RATED PREDICATE ====================
 
-  /**
-   * Strict definition of "fully rated"
-   * A, C, E must be numbers (1-5)
-   * L, M, T must be numbers (0-2, 0 is allowed)
-   * estimate_bucket must be set
-   * confidence must be high|medium|low
-   */
   isRated(item) {
     return (
       typeof item.A === 'number' && item.A >= 1 && item.A <= 5 &&
@@ -395,19 +302,15 @@ class BattlePlanDB {
     return item.estimate_bucket >= 90 || item.confidence === 'low';
   }
 
-  // Get total estimate including subtasks
   async getEffectiveEstimate(item) {
     const baseEstimate = item.estimate_bucket || 0;
     const subtasks = await this.getSubtasks(item.id);
-    const subtaskTime = subtasks.reduce((sum, s) => sum + (s.estimate_bucket || 0), 0);
-    return baseEstimate + subtaskTime;
+    return baseEstimate + subtasks.reduce((sum, s) => sum + (s.estimate_bucket || 0), 0);
   }
 
-  // Check if item is a monster including subtask time
   async isMonsterAsync(item) {
     if (item.confidence === 'low') return true;
-    const effectiveEstimate = await this.getEffectiveEstimate(item);
-    return effectiveEstimate >= 90;
+    return (await this.getEffectiveEstimate(item)) >= 90;
   }
 
   // ==================== SCORING (ACE+LMT) ====================
@@ -416,23 +319,18 @@ class BattlePlanDB {
     if (item.A == null || item.C == null || item.E == null) {
       return { ace_score: null, lmt_bonus: null, priority_score: null };
     }
-
     const ace_score = (item.A * 2) + (item.C * 2) - item.E;
     const lmt_bonus = (item.L || 0) + (item.M || 0) + (item.T || 0);
-    const priority_score = ace_score + lmt_bonus;
-
-    return { ace_score, lmt_bonus, priority_score };
+    return { ace_score, lmt_bonus, priority_score: ace_score + lmt_bonus };
   }
 
   calculateBadges(item) {
     const badges = [];
-
     if (item.C === 5) badges.push('URGENT');
     if (item.A === 5 && item.C >= 4) badges.push('CRITICAL');
     if (this.isMonster(item)) badges.push('MONSTER');
     if (item.L === 2) badges.push('LEVERAGE');
     if (item.E >= 4) badges.push('FRICTION');
-
     return badges;
   }
 
@@ -440,22 +338,10 @@ class BattlePlanDB {
 
   async getCalibrationFactor(tag) {
     await this.ready;
-    const effectiveTag = tag || 'Other';
-    const history = await this.getCalibrationHistory(effectiveTag);
-
-    if (history.length === 0) return 1.0;
-
-    // Filter out invalid records
-    const validHistory = history.filter(h =>
-      h.estimate_bucket > 0 && h.actual_bucket > 0
-    );
-
+    const history = await this.getCalibrationHistory(tag || 'Other');
+    const validHistory = history.filter(h => h.estimate_bucket > 0 && h.actual_bucket > 0);
     if (validHistory.length === 0) return 1.0;
-
-    const ratios = validHistory.map(h => h.actual_bucket / h.estimate_bucket);
-    const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;
-
-    // Clamp to [1.0, 2.0]
+    const avg = validHistory.reduce((sum, h) => sum + h.actual_bucket / h.estimate_bucket, 0) / validHistory.length;
     return Math.max(1.0, Math.min(2.0, avg));
   }
 
@@ -464,12 +350,10 @@ class BattlePlanDB {
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction('calibration_history', 'readonly');
       const store = tx.objectStore('calibration_history');
-      const index = store.index('tag');
-      const request = index.getAll(tag);
+      const request = store.index('tag').getAll(tag);
       request.onsuccess = () => {
-        const results = request.result || [];
-        // Sort by completed_at desc and take last 20
-        results.sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+        const results = (request.result || [])
+          .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
         resolve(results.slice(0, 20));
       };
       request.onerror = () => reject(request.error);
@@ -478,63 +362,32 @@ class BattlePlanDB {
 
   async addCalibrationEntry(tag, estimate_bucket, actual_bucket) {
     await this.ready;
-
-    // Skip if invalid data
-    if (!estimate_bucket || estimate_bucket <= 0) return null;
-    if (!actual_bucket || actual_bucket <= 0) return null;
-
+    if (!estimate_bucket || estimate_bucket <= 0 || !actual_bucket || actual_bucket <= 0) return null;
     const entry = {
       id: this.generateId(),
       tag: tag || 'Other',
-      estimate_bucket,
-      actual_bucket,
+      estimate_bucket, actual_bucket,
       completed_at: new Date().toISOString()
     };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('calibration_history', 'readwrite');
-      const store = tx.objectStore('calibration_history');
-      const request = store.add(entry);
-      request.onsuccess = () => resolve(entry);
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('calibration_history', 'readwrite', s => s.add(entry));
+    return entry;
   }
 
   async getBufferedMinutes(item) {
     if (!item.estimate_bucket || !item.confidence) return null;
-
     const multiplier = CONFIDENCE_MULTIPLIERS[item.confidence] || 1.3;
     const calibrationFactor = await this.getCalibrationFactor(item.tag);
-    const buffered = item.estimate_bucket * multiplier * calibrationFactor;
-
-    // Round up to nearest 5 minutes
-    return Math.ceil(buffered / 5) * 5;
+    return Math.ceil(item.estimate_bucket * multiplier * calibrationFactor / 5) * 5;
   }
 
   // ==================== AUTO-SCHEDULE ====================
 
-  /**
-   * Auto-schedule today: sort all tasks by priority, fit within capacity,
-   * and identify overflow to push to tomorrow.
-   * Returns { keep: [], overflow: [], unrated: [], usedMinutes, capacity }
-   */
   async autoScheduleToday() {
     const todayItems = await this.getTodayItems();
     const usableCapacity = await this.getUsableCapacity();
 
-    // Separate rated vs unrated
-    const rated = [];
-    const unrated = [];
+    const { rated, unrated } = this._partitionByRating(todayItems);
 
-    for (const item of todayItems) {
-      if (this.isRated(item)) {
-        rated.push(item);
-      } else {
-        unrated.push(item);
-      }
-    }
-
-    // Score and enrich rated items
     const scored = await Promise.all(rated.map(async item => {
       const scores = this.calculateScores(item);
       const bufferedMinutes = await this.getBufferedMinutes(item);
@@ -544,18 +397,10 @@ class BattlePlanDB {
       return { ...item, ...scores, bufferedMinutes: bufferedMinutes || 0, isUrgent, isMonster, badges };
     }));
 
-    // Sort: URGENT first, then by priority_score descending
-    scored.sort((a, b) => {
-      if (a.isUrgent && !b.isUrgent) return -1;
-      if (!a.isUrgent && b.isUrgent) return 1;
-      return (b.priority_score || 0) - (a.priority_score || 0);
-    });
+    this._sortByUrgencyAndScore(scored);
 
-    // Greedy fill: pack highest priority items into capacity
-    const keep = [];
-    const overflow = [];
+    const keep = [], overflow = [];
     let usedMinutes = 0;
-
     for (const item of scored) {
       if (usedMinutes + item.bufferedMinutes <= usableCapacity) {
         keep.push(item);
@@ -568,178 +413,25 @@ class BattlePlanDB {
     return { keep, overflow, unrated, usedMinutes, capacity: usableCapacity };
   }
 
+  // ==================== RERACK (shared core) ====================
+
   /**
-   * Rerack today after a task completion.
-   * Deterministic: same inputs => same outputs.
-   *
-   * Algorithm:
-   * 1. Compute overrun = actual_bucket - estimate_bucket (0 if under/equal)
-   * 2. Compute remaining capacity = usableCapacity - time already consumed by done tasks today
-   * 3. Separate remaining tasks into "protected" vs "flexible":
-   *    Protected = has dueDate == today, or has explicit scheduled time, or isTop3 locked
-   * 4. Rank flexible tasks by value density = priority_score / bufferedMinutes
-   *    (with slight bonus for shorter tasks: density * (1 + 10/bufferedMinutes))
-   * 5. Greedy-fill: protected first (always kept), then flexible by density
-   * 6. Overflow = what doesn't fit
-   *
-   * @param {string} completedItemId - the item just completed (should already be in done status)
-   * @param {string[]} lockedIds - IDs the user manually locked to today
-   * @returns {Object} { keep, overflow, unrated, overrunMinutes, remainingCapacity, usableCapacity,
-   *                      consumedMinutes, completedItem, protectedOverflow }
+   * Core rerack logic shared by rerackAfterCompletion and rerackForTimePressure.
+   * Separates protected vs flexible tasks, greedy-fills by value density.
    */
-  async rerackAfterCompletion(completedItemId, lockedIds = []) {
+  async _rerackCore({ excludeId = null, lockedIds = [], capacity, defaultReason = 'doesn\'t fit remaining time' }) {
     const todayItems = await this.getTodayItems();
-    const allItems = await this.getAllItems();
-    const usableCapacity = await this.getUsableCapacity();
     const today = this.getToday();
 
-    // Get the completed item for display (already in done status with actual_bucket set)
-    const completedItem = await this.getItem(completedItemId);
-    const actualBucket = completedItem?.actual_bucket || completedItem?.estimate_bucket || 0;
-    const estimateBucket = completedItem?.estimate_bucket || 0;
-    const overrunMinutes = Math.max(0, actualBucket - estimateBucket);
+    const remaining = todayItems.filter(i => i.id !== excludeId && i.status !== 'done');
 
-    // Calculate time already consumed by done tasks today
-    const doneToday = allItems.filter(i =>
-      i.status === 'done' &&
-      (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))
-    );
-    let consumedMinutes = 0;
-    for (const item of doneToday) {
-      const bucket = item.actual_bucket || item.estimate_bucket || 0;
-      consumedMinutes += bucket;
-    }
+    const { rated, unrated } = this._partitionByRating(remaining);
 
-    const remainingCapacity = Math.max(0, usableCapacity - consumedMinutes);
-
-    // Get remaining (not-done, not the completed one) today items
-    const remaining = todayItems.filter(i => i.id !== completedItemId && i.status !== 'done');
-
-    // Separate rated vs unrated
-    const rated = [];
-    const unrated = [];
-    for (const item of remaining) {
-      if (this.isRated(item)) {
-        rated.push(item);
-      } else {
-        unrated.push(item);
-      }
-    }
-
-    // Enrich rated items with scores and buffered time
     const scored = await Promise.all(rated.map(async item => {
       const scores = this.calculateScores(item);
       const bufferedMinutes = await this.getBufferedMinutes(item) || 0;
       const isUrgent = item.C === 5;
       const badges = this.calculateBadges(item);
-
-      // Determine if "protected" (should not be auto-moved)
-      const isProtected =
-        (item.dueDate && item.dueDate <= today) || // due today or overdue
-        (item.isTop3 && item.top3Locked) ||         // manually locked in Top 3
-        lockedIds.includes(item.id);                 // user locked via rerack modal
-
-      // Value density: points per minute, with bonus for shorter tasks
-      const density = bufferedMinutes > 0
-        ? (scores.priority_score || 0) / bufferedMinutes * (1 + 10 / bufferedMinutes)
-        : (scores.priority_score || 0);
-
-      return {
-        ...item, ...scores, bufferedMinutes, isUrgent, badges,
-        isProtected, density
-      };
-    }));
-
-    // Split into protected and flexible
-    const protectedTasks = scored.filter(i => i.isProtected);
-    const flexible = scored.filter(i => !i.isProtected);
-
-    // Sort flexible by value density descending
-    flexible.sort((a, b) => b.density - a.density);
-
-    // Greedy fill: protected first (always kept), then flexible by density
-    const keep = [];
-    const overflow = [];
-    let usedMinutes = 0;
-
-    // Protected tasks always stay (unless they alone exceed capacity)
-    for (const item of protectedTasks) {
-      keep.push({ ...item, reason: null });
-      usedMinutes += item.bufferedMinutes;
-    }
-
-    // Fill with flexible tasks
-    for (const item of flexible) {
-      if (usedMinutes + item.bufferedMinutes <= remainingCapacity) {
-        keep.push({ ...item, reason: null });
-        usedMinutes += item.bufferedMinutes;
-      } else {
-        // Determine reason for overflow
-        let reason = 'doesn\'t fit remaining time';
-        if (item.density < 0.15) reason = 'low impact per minute';
-        else if (item.bufferedMinutes > remainingCapacity * 0.7) reason = 'too long for remaining time';
-        overflow.push({ ...item, reason });
-      }
-    }
-
-    // Check if protected tasks alone exceed capacity
-    const protectedMinutes = protectedTasks.reduce((s, i) => s + i.bufferedMinutes, 0);
-    const protectedOverflow = protectedMinutes > remainingCapacity;
-
-    return {
-      keep,
-      overflow,
-      unrated,
-      overrunMinutes,
-      remainingCapacity,
-      usableCapacity,
-      consumedMinutes,
-      completedItem: completedItem ? {
-        text: completedItem.text,
-        estimate_bucket: estimateBucket,
-        actual_bucket: actualBucket
-      } : null,
-      protectedOverflow
-    };
-  }
-
-  /**
-   * Rerack for time pressure: like rerackAfterCompletion but uses
-   * min(remainingCapacity, remainingDayMinutes) as effective capacity.
-   */
-  async rerackForTimePressure(lockedIds = []) {
-    const todayItems = await this.getTodayItems();
-    const allItems = await this.getAllItems();
-    const usableCapacity = await this.getUsableCapacity();
-    const today = this.getToday();
-    const remainingDayMinutes = await this.getRemainingDayMinutes();
-
-    // Time consumed by done tasks today
-    const doneToday = allItems.filter(i =>
-      i.status === 'done' &&
-      (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))
-    );
-    let consumedMinutes = 0;
-    for (const item of doneToday) {
-      consumedMinutes += item.actual_bucket || item.estimate_bucket || 0;
-    }
-
-    const budgetCapacity = Math.max(0, usableCapacity - consumedMinutes);
-    // Effective capacity is the lesser of budget and clock time
-    const effectiveCapacity = Math.min(budgetCapacity, remainingDayMinutes);
-
-    const remaining = todayItems.filter(i => i.status !== 'done');
-
-    const rated = [];
-    const unrated = [];
-    for (const item of remaining) {
-      if (this.isRated(item)) rated.push(item);
-      else unrated.push(item);
-    }
-
-    const scored = await Promise.all(rated.map(async item => {
-      const scores = this.calculateScores(item);
-      const bufferedMinutes = await this.getBufferedMinutes(item) || 0;
       const isProtected =
         (item.dueDate && item.dueDate <= today) ||
         (item.isTop3 && item.top3Locked) ||
@@ -747,15 +439,14 @@ class BattlePlanDB {
       const density = bufferedMinutes > 0
         ? (scores.priority_score || 0) / bufferedMinutes * (1 + 10 / bufferedMinutes)
         : (scores.priority_score || 0);
-      return { ...item, ...scores, bufferedMinutes, isProtected, density };
+      return { ...item, ...scores, bufferedMinutes, isUrgent, badges, isProtected, density };
     }));
 
     const protectedTasks = scored.filter(i => i.isProtected);
     const flexible = scored.filter(i => !i.isProtected);
     flexible.sort((a, b) => b.density - a.density);
 
-    const keep = [];
-    const overflow = [];
+    const keep = [], overflow = [];
     let usedMinutes = 0;
 
     for (const item of protectedTasks) {
@@ -764,49 +455,81 @@ class BattlePlanDB {
     }
 
     for (const item of flexible) {
-      if (usedMinutes + item.bufferedMinutes <= effectiveCapacity) {
+      if (usedMinutes + item.bufferedMinutes <= capacity) {
         keep.push({ ...item, reason: null });
         usedMinutes += item.bufferedMinutes;
       } else {
-        let reason = 'not enough time left today';
+        let reason = defaultReason;
         if (item.density < 0.15) reason = 'low impact per minute';
-        else if (item.bufferedMinutes > effectiveCapacity * 0.7) reason = 'too long for remaining time';
+        else if (item.bufferedMinutes > capacity * 0.7) reason = 'too long for remaining time';
         overflow.push({ ...item, reason });
       }
     }
 
     const protectedMinutes = protectedTasks.reduce((s, i) => s + i.bufferedMinutes, 0);
-    const protectedOverflow = protectedMinutes > effectiveCapacity;
+    return { keep, overflow, unrated, protectedOverflow: protectedMinutes > capacity };
+  }
+
+  async rerackAfterCompletion(completedItemId, lockedIds = []) {
+    const allItems = await this.getAllItems();
+    const usableCapacity = await this.getUsableCapacity();
+    const today = this.getToday();
+
+    const completedItem = await this.getItem(completedItemId);
+    const actualBucket = completedItem?.actual_bucket || completedItem?.estimate_bucket || 0;
+    const estimateBucket = completedItem?.estimate_bucket || 0;
+    const overrunMinutes = Math.max(0, actualBucket - estimateBucket);
+    const consumedMinutes = this._getDoneTodayConsumed(allItems, today);
+    const remainingCapacity = Math.max(0, usableCapacity - consumedMinutes);
+
+    const core = await this._rerackCore({
+      excludeId: completedItemId, lockedIds,
+      capacity: remainingCapacity,
+      defaultReason: 'doesn\'t fit remaining time'
+    });
 
     return {
-      keep, overflow, unrated,
-      overrunMinutes: 0,
+      ...core, overrunMinutes, remainingCapacity,
+      usableCapacity, consumedMinutes,
+      completedItem: completedItem ? {
+        text: completedItem.text,
+        estimate_bucket: estimateBucket,
+        actual_bucket: actualBucket
+      } : null
+    };
+  }
+
+  async rerackForTimePressure(lockedIds = []) {
+    const allItems = await this.getAllItems();
+    const usableCapacity = await this.getUsableCapacity();
+    const today = this.getToday();
+    const remainingDayMinutes = await this.getRemainingDayMinutes();
+
+    const consumedMinutes = this._getDoneTodayConsumed(allItems, today);
+    const budgetCapacity = Math.max(0, usableCapacity - consumedMinutes);
+    const effectiveCapacity = Math.min(budgetCapacity, remainingDayMinutes);
+
+    const core = await this._rerackCore({
+      lockedIds, capacity: effectiveCapacity,
+      defaultReason: 'not enough time left today'
+    });
+
+    return {
+      ...core, overrunMinutes: 0,
       remainingCapacity: effectiveCapacity,
-      usableCapacity,
-      consumedMinutes,
-      completedItem: null,
-      protectedOverflow
+      usableCapacity, consumedMinutes,
+      completedItem: null
     };
   }
 
   // ==================== CAPACITY ====================
 
-  /**
-   * Get today's daily capacity override, or null if not set.
-   * Override is stored as { date, minutes } and only valid for today.
-   */
   async getDailyCapacityOverride() {
     const override = await this.getSetting('daily_capacity_override', null);
-    if (!override) return null;
-    // Only valid if the override is for today
-    if (override.date !== this.getToday()) return null;
+    if (!override || override.date !== this.getToday()) return null;
     return override.minutes;
   }
 
-  /**
-   * Set a capacity override for today only.
-   * Pass null to clear the override.
-   */
   async setDailyCapacityOverride(minutes) {
     if (minutes === null) {
       await this.setSetting('daily_capacity_override', null);
@@ -818,66 +541,37 @@ class BattlePlanDB {
     }
   }
 
-  async getUsableCapacity() {
-    // Check for daily override first
-    const override = await this.getDailyCapacityOverride();
-    if (override !== null) return override;
-
-    const isWeekend = this.isWeekend();
-    const capacityKey = isWeekend ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
+  /** Get today's usable minutes. Pass false to ignore daily override (returns base capacity). */
+  async getUsableCapacity(includeOverride = true) {
+    if (includeOverride) {
+      const override = await this.getDailyCapacityOverride();
+      if (override !== null) return override;
+    }
+    const capacityKey = this.isWeekend() ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
     const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
     const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
-
     return Math.round(capacity * (1 - slackPercent / 100));
   }
 
-  /**
-   * Get the default usable capacity (ignoring daily override) for display purposes.
-   */
   async getDefaultUsableCapacity() {
-    const isWeekend = this.isWeekend();
-    const capacityKey = isWeekend ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
-    const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
-    const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
-    return Math.round(capacity * (1 - slackPercent / 100));
+    return this.getUsableCapacity(false);
   }
 
-  /**
-   * Get minutes remaining in the workday from now until workday_end_hour.
-   * Returns 0 if the workday is already over.
-   */
   async getRemainingDayMinutes() {
     const endHour = await this.getSetting('workday_end_hour', DEFAULT_SETTINGS.workday_end_hour);
     const now = new Date();
     const endOfDay = new Date(now);
     endOfDay.setHours(endHour, 0, 0, 0);
-
-    const remainingMs = endOfDay - now;
-    return Math.max(0, Math.round(remainingMs / 60000));
+    return Math.max(0, Math.round((endOfDay - now) / 60000));
   }
 
-  /**
-   * Check time pressure: compare remaining task time vs remaining day time.
-   * Returns { pressure, remainingDayMinutes, remainingTaskMinutes, overflowMinutes, overflowTasks }
-   * pressure: 'none' | 'warning' | 'critical' | 'overdue'
-   */
   async checkTimePressure() {
     const remainingDayMinutes = await this.getRemainingDayMinutes();
     const todayItems = await this.getTodayItems();
     const today = this.getToday();
     const allItems = await this.getAllItems();
+    const consumedMinutes = this._getDoneTodayConsumed(allItems, today);
 
-    // Calculate time already consumed by done tasks today
-    const doneToday = allItems.filter(i =>
-      i.status === 'done' &&
-      (i.completed_at ? i.completed_at.startsWith(today) : (i.updated_at && i.updated_at.startsWith(today)))
-    );
-    let consumedMinutes = 0;
-    for (const item of doneToday) {
-      consumedMinutes += item.actual_bucket || item.estimate_bucket || 0;
-    }
-
-    // Calculate remaining task time (not-done today items)
     let remainingTaskMinutes = 0;
     const remainingTasks = [];
     for (const item of todayItems) {
@@ -890,28 +584,19 @@ class BattlePlanDB {
 
     const overflowMinutes = Math.max(0, remainingTaskMinutes - remainingDayMinutes);
 
-    // Determine pressure level
     let pressure = 'none';
     if (remainingDayMinutes === 0 && remainingTaskMinutes > 0) {
-      pressure = 'overdue'; // workday is over but tasks remain
+      pressure = 'overdue';
     } else if (remainingDayMinutes > 0 && remainingTaskMinutes > remainingDayMinutes) {
-      const ratio = remainingTaskMinutes / remainingDayMinutes;
-      pressure = ratio > 1.5 ? 'critical' : 'warning';
+      pressure = (remainingTaskMinutes / remainingDayMinutes) > 1.5 ? 'critical' : 'warning';
     }
 
-    // Identify which tasks overflow (lowest priority first)
-    const scored = [];
-    for (const item of remainingTasks) {
-      if (this.isRated(item)) {
-        const scores = this.calculateScores(item);
-        scored.push({ ...item, priority_score: scores.priority_score || 0 });
-      } else {
-        scored.push({ ...item, priority_score: 0 });
-      }
-    }
+    const scored = remainingTasks.map(item => {
+      const ps = this.isRated(item) ? (this.calculateScores(item).priority_score || 0) : 0;
+      return { ...item, priority_score: ps };
+    });
     scored.sort((a, b) => (b.priority_score || 0) - (a.priority_score || 0));
 
-    // Greedy fill by priority, overflow is what doesn't fit
     const overflowTasks = [];
     let filled = 0;
     for (const item of scored) {
@@ -922,50 +607,24 @@ class BattlePlanDB {
       }
     }
 
-    return {
-      pressure,
-      remainingDayMinutes,
-      remainingTaskMinutes,
-      consumedMinutes,
-      overflowMinutes,
-      overflowTasks
-    };
+    return { pressure, remainingDayMinutes, remainingTaskMinutes, consumedMinutes, overflowMinutes, overflowTasks };
   }
 
   // ==================== TODAY LOGIC ====================
 
-  /**
-   * Today query logic:
-   * - status === 'today' OR
-   * - scheduled_for_date <= today (and status is not done)
-   * - If scheduled_for_date is null, only shows based on status
-   */
   async getTodayItems() {
     const items = await this.getAllItems();
     const today = this.getToday();
-
     return items.filter(i => {
-      // Exclude subtasks from main lists
-      if (i.parent_id) return false;
-      if (i.status === 'done') return false;
-
-      // Explicit today status
+      if (i.parent_id || i.status === 'done') return false;
       if (i.status === 'today') return true;
-
-      // Scheduled for today or earlier (overdue)
       if (i.scheduled_for_date && i.scheduled_for_date <= today) return true;
-
       return false;
     });
   }
 
-  /**
-   * Check if an item is overdue
-   * Overdue = scheduled_for_date < today AND not done
-   */
   isOverdue(item) {
-    if (item.status === 'done') return false;
-    if (!item.scheduled_for_date) return false;
+    if (item.status === 'done' || !item.scheduled_for_date) return false;
     return item.scheduled_for_date < this.getToday();
   }
 
@@ -974,36 +633,25 @@ class BattlePlanDB {
   async getTop3Items() {
     const items = await this.getAllItems();
     const today = this.getToday();
-
     return items
       .filter(i => i.isTop3 && i.top3Date === today && i.status !== 'done')
       .sort((a, b) => (a.top3Order || 0) - (b.top3Order || 0));
   }
 
-  /**
-   * Suggest Top 3 algorithm:
-   * 1. Keep locked Top 3 items (if still eligible)
-   * 2. Fill remaining slots with highest priority rated tasks
-   * 3. Respect monster rule (max 1 monster)
-   * 4. Respect capacity
-   */
   async suggestTop3() {
     const today = this.getToday();
     const todayItems = await this.getTodayItems();
     const usableCapacity = await this.getUsableCapacity();
 
-    // Separate locked vs unlocked Top 3
     const lockedTop3 = todayItems.filter(i =>
       i.isTop3 && i.top3Date === today && i.top3Locked && this.isRated(i)
     );
 
-    // Get rated items not currently locked in Top 3
     const candidates = todayItems.filter(i =>
       this.isRated(i) &&
       !(i.isTop3 && i.top3Date === today && i.top3Locked)
     );
 
-    // Calculate scores for candidates (including subtask time for monster check)
     const scored = await Promise.all(candidates.map(async item => {
       const scores = this.calculateScores(item);
       const bufferedMinutes = await this.getBufferedMinutes(item);
@@ -1012,16 +660,9 @@ class BattlePlanDB {
       return { ...item, ...scores, bufferedMinutes, isUrgent, isMonster };
     }));
 
-    // Sort: URGENT first, then by priority_score descending
-    scored.sort((a, b) => {
-      if (a.isUrgent && !b.isUrgent) return -1;
-      if (!a.isUrgent && b.isUrgent) return 1;
-      return (b.priority_score || 0) - (a.priority_score || 0);
-    });
+    this._sortByUrgencyAndScore(scored);
 
-    // Calculate locked items stats
-    let usedMinutes = 0;
-    let monsterCount = 0;
+    let usedMinutes = 0, monsterCount = 0;
     const selected = [];
 
     for (const item of lockedTop3) {
@@ -1031,17 +672,10 @@ class BattlePlanDB {
       selected.push({ ...item, bufferedMinutes: buffered });
     }
 
-    // Greedy selection for remaining slots
     for (const item of scored) {
       if (selected.length >= 3) break;
-
-      // Skip if already selected (was locked)
       if (selected.find(s => s.id === item.id)) continue;
-
-      // Monster rule: max 1 MONSTER
       if (item.isMonster && monsterCount >= 1) continue;
-
-      // Capacity check
       if (usedMinutes + item.bufferedMinutes <= usableCapacity) {
         selected.push(item);
         usedMinutes += item.bufferedMinutes;
@@ -1049,56 +683,32 @@ class BattlePlanDB {
       }
     }
 
-    // Generate appropriate message
     let message = null;
     if (selected.length === 0 && scored.length > 0) {
-      // Check if all candidates are monsters
-      const allMonsters = scored.every(s => s.isMonster);
-      if (allMonsters) {
-        message = 'Everything is a MONSTER. Break a task down or lower estimates.';
-      } else {
-        message = 'No tasks fit within capacity. Reduce estimates or increase capacity.';
-      }
+      message = scored.every(s => s.isMonster)
+        ? 'Everything is a MONSTER. Break a task down or lower estimates.'
+        : 'No tasks fit within capacity. Reduce estimates or increase capacity.';
     } else if (selected.length < 3 && scored.length >= 3) {
       message = `Only ${selected.length} task${selected.length === 1 ? '' : 's'} fit within today's capacity. Break down a MONSTER or lower estimates.`;
     }
 
-    return {
-      suggested: selected,
-      usedMinutes,
-      usableCapacity,
-      message,
-      monsterCount,
-      lockedCount: lockedTop3.length
-    };
+    return { suggested: selected, usedMinutes, usableCapacity, message, monsterCount, lockedCount: lockedTop3.length };
   }
 
   async applyTop3Suggestion(suggestion) {
     const today = this.getToday();
     const allItems = await this.getAllItems();
 
-    // Clear non-locked Top 3 from today
     for (const item of allItems) {
       if (item.isTop3 && item.top3Date === today && !item.top3Locked) {
-        await this.updateItem(item.id, {
-          isTop3: false,
-          top3Order: null,
-          top3Date: null
-        });
+        await this.updateItem(item.id, BattlePlanDB.CLEAR_TOP3);
       }
     }
 
-    // Re-normalize order: locked items keep their order, new items fill gaps
     let order = 0;
     for (const item of suggestion.suggested) {
-      await this.updateItem(item.id, {
-        isTop3: true,
-        top3Order: order,
-        top3Date: today
-      });
-      order++;
+      await this.updateItem(item.id, { isTop3: true, top3Order: order++, top3Date: today });
     }
-
     return suggestion;
   }
 
@@ -1109,9 +719,6 @@ class BattlePlanDB {
 
     if (isTop3) {
       const currentTop3 = await this.getTop3Items();
-      const usableCapacity = await this.getUsableCapacity();
-
-      // Check monster rule (including subtask time)
       const isMonster = await this.isMonsterAsync(item);
       let currentMonsterCount = 0;
       for (const i of currentTop3) {
@@ -1119,43 +726,25 @@ class BattlePlanDB {
       }
 
       if (isMonster && currentMonsterCount >= 1 && !currentTop3.find(i => i.id === id)) {
-        return {
-          error: 'MONSTER_LIMIT',
-          message: 'Only 1 MONSTER allowed in Top 3. Break it down or remove the other MONSTER first.'
-        };
+        return { error: 'MONSTER_LIMIT', message: 'Only 1 MONSTER allowed in Top 3. Break it down or remove the other MONSTER first.' };
       }
-
-      // Check count limit
       if (currentTop3.length >= 3 && !currentTop3.find(i => i.id === id)) {
         return { error: 'TOP3_FULL', message: 'Top 3 is full. Remove an item first.' };
       }
 
-      const order = currentTop3.length;
-
-      // If manually toggled, auto-lock
       return this.updateItem(id, {
-        isTop3: true,
-        top3Order: order,
-        top3Date: today,
-        top3Locked: manualToggle
+        isTop3: true, top3Order: currentTop3.length,
+        top3Date: today, top3Locked: manualToggle
       });
     } else {
-      return this.updateItem(id, {
-        isTop3: false,
-        top3Order: null,
-        top3Date: null,
-        top3Locked: false
-      });
+      return this.updateItem(id, BattlePlanDB.CLEAR_TOP3);
     }
   }
 
   async getTop3Stats() {
     const top3Items = await this.getTop3Items();
     const usableCapacity = await this.getUsableCapacity();
-
-    let totalBuffered = 0;
-    let monsterCount = 0;
-    let lockedCount = 0;
+    let totalBuffered = 0, monsterCount = 0, lockedCount = 0;
 
     for (const item of top3Items) {
       const buffered = await this.getBufferedMinutes(item);
@@ -1164,14 +753,9 @@ class BattlePlanDB {
       if (item.top3Locked) lockedCount++;
     }
 
-    const isOverCapacity = totalBuffered > usableCapacity;
-
     return {
-      totalBuffered,
-      usableCapacity,
-      monsterCount,
-      lockedCount,
-      isOverCapacity,
+      totalBuffered, usableCapacity, monsterCount, lockedCount,
+      isOverCapacity: totalBuffered > usableCapacity,
       top3Count: top3Items.length
     };
   }
@@ -1186,9 +770,7 @@ class BattlePlanDB {
   async getTomorrowItems() {
     const items = await this.getAllItems();
     const tomorrow = this.getTomorrow();
-    return items.filter(i =>
-      !i.parent_id && i.status !== 'done' && i.scheduled_for_date === tomorrow
-    );
+    return items.filter(i => !i.parent_id && i.status !== 'done' && i.scheduled_for_date === tomorrow);
   }
 
   async getItemsByStatus(status) {
@@ -1200,21 +782,14 @@ class BattlePlanDB {
 
   async getTodayStats() {
     const items = await this.getAllItems();
-    const today = this.getToday();
-
     const todayItems = await this.getTodayItems();
-
     const ratedCount = todayItems.filter(i => this.isRated(i)).length;
-    const unratedCount = todayItems.length - ratedCount;
-
     const overdueItems = items.filter(i => this.isOverdue(i));
-
     const top3Stats = await this.getTop3Stats();
 
     return {
-      totalTasks: todayItems.length,
-      ratedCount,
-      unratedCount,
+      totalTasks: todayItems.length, ratedCount,
+      unratedCount: todayItems.length - ratedCount,
       overdueCount: overdueItems.length,
       ...top3Stats
     };
@@ -1225,55 +800,24 @@ class BattlePlanDB {
   async setTomorrow(id) {
     const tomorrow = this.getTomorrow();
     return this.updateItem(id, {
-      status: 'tomorrow',
-      scheduled_for_date: tomorrow,
-      // Clear Top 3 when moved out of today
-      isTop3: false,
-      top3Order: null,
-      top3Date: null,
-      top3Locked: false
+      status: 'tomorrow', scheduled_for_date: tomorrow,
+      ...BattlePlanDB.CLEAR_TOP3
     });
   }
 
   async setToday(id) {
-    const today = this.getToday();
-    return this.updateItem(id, {
-      status: 'today',
-      scheduled_for_date: today
-    });
+    return this.updateItem(id, { status: 'today', scheduled_for_date: this.getToday() });
   }
 
-  /**
-   * Defer a task to tomorrow WITHOUT setting scheduled_for_date.
-   * Used by rerack/auto-schedule overflow so the smart rollover knows
-   * these are "overflow" items, not user-scheduled.
-   */
   async deferToTomorrow(id) {
     return this.updateItem(id, {
-      status: 'tomorrow',
-      scheduled_for_date: null,
-      isTop3: false,
-      top3Order: null,
-      top3Date: null,
-      top3Locked: false
+      status: 'tomorrow', scheduled_for_date: null,
+      ...BattlePlanDB.CLEAR_TOP3
     });
   }
 
   // ==================== ROLLOVER / DAILY MAINTENANCE ====================
 
-  /**
-   * Smart daily maintenance with capacity-aware rollover.
-   *
-   * Phase 1 (protected - always move to today):
-   *   - Items with dueDate within 7 days
-   *   - Items with scheduled_for_date <= today (user deliberately scheduled)
-   *
-   * Phase 2 (candidates - move if capacity allows, sorted by priority):
-   *   - Tomorrow items WITHOUT scheduled_for_date (rerack/auto-schedule overflow)
-   *   - Highest priority first; items that don't fit stay in tomorrow
-   *
-   * Phase 3: Clear stale Top 3 from previous days
-   */
   async runDailyMaintenance() {
     await this.ready;
     const today = this.getToday();
@@ -1281,11 +825,7 @@ class BattlePlanDB {
     const usableCapacity = await this.getUsableCapacity();
     const autoClearTop3 = await this.getSetting('top3_auto_clear_daily', true);
 
-    let overdueCount = 0;
-    let rolledCount = 0;
-    let deferredCount = 0;
-    let clearedTop3Count = 0;
-
+    let overdueCount = 0, rolledCount = 0, deferredCount = 0, clearedTop3Count = 0;
     const protectedMoves = [];
     const candidates = [];
     const protectedIds = new Set();
@@ -1293,25 +833,20 @@ class BattlePlanDB {
     for (const item of items) {
       if (item.status === 'done') continue;
 
-      // Count overdue
-      if (this.isOverdue(item)) {
-        overdueCount++;
-      }
+      if (this.isOverdue(item)) overdueCount++;
 
-      // Due within 7 days - ALWAYS move to today (protected)
+      // Due within 7 days - ALWAYS move to today
       if (item.dueDate && item.status !== 'today') {
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
+        const now = new Date(); now.setHours(0, 0, 0, 0);
         const due = new Date(item.dueDate + 'T00:00:00');
-        const daysUntilDue = Math.ceil((due - now) / (1000 * 60 * 60 * 24));
-        if (daysUntilDue <= 7) {
+        if (Math.ceil((due - now) / (1000 * 60 * 60 * 24)) <= 7) {
           protectedMoves.push(item);
           protectedIds.add(item.id);
           continue;
         }
       }
 
-      // Scheduled for today or earlier - ALWAYS move (user deliberately planned)
+      // Scheduled for today or earlier
       if (item.scheduled_for_date && item.scheduled_for_date <= today && item.status !== 'today') {
         if (!protectedIds.has(item.id)) {
           protectedMoves.push(item);
@@ -1325,16 +860,10 @@ class BattlePlanDB {
         candidates.push(item);
       }
 
-      // Clear stale Top 3 (from previous days)
-      if (autoClearTop3 && item.isTop3 && item.top3Date && item.top3Date !== today) {
-        if (!item.top3Locked) {
-          await this.updateItem(item.id, {
-            isTop3: false,
-            top3Order: null,
-            top3Date: null
-          });
-          clearedTop3Count++;
-        }
+      // Clear stale Top 3
+      if (autoClearTop3 && item.isTop3 && item.top3Date && item.top3Date !== today && !item.top3Locked) {
+        await this.updateItem(item.id, BattlePlanDB.CLEAR_TOP3);
+        clearedTop3Count++;
       }
     }
 
@@ -1345,7 +874,6 @@ class BattlePlanDB {
     }
 
     // Phase 2: Capacity-aware rollover of candidates
-    // Calculate how much time is already committed in today
     const todayItems = await this.getTodayItems();
     let usedMinutes = 0;
     for (const ti of todayItems) {
@@ -1355,7 +883,6 @@ class BattlePlanDB {
     }
     let remainingCapacity = usableCapacity - usedMinutes;
 
-    // Score and sort candidates by priority (highest first)
     const scored = await Promise.all(candidates.map(async item => {
       const scores = this.isRated(item) ? this.calculateScores(item) : { priority_score: 0 };
       const buffered = (await this.getBufferedMinutes(item)) || 0;
@@ -1363,14 +890,12 @@ class BattlePlanDB {
     }));
     scored.sort((a, b) => b.priority_score - a.priority_score);
 
-    // Fill remaining capacity with highest-priority candidates
     for (const item of scored) {
       if (item.bufferedMinutes === 0 || item.bufferedMinutes <= remainingCapacity) {
         await this.updateItem(item.id, { status: 'today', scheduled_for_date: today });
         remainingCapacity -= item.bufferedMinutes;
         rolledCount++;
       } else {
-        // Doesn't fit - stays in tomorrow
         deferredCount++;
       }
     }
@@ -1378,232 +903,138 @@ class BattlePlanDB {
     return { overdueCount, rolledCount, deferredCount, clearedTop3Count };
   }
 
-  // Alias for backward compatibility
-  async runRollover() {
-    return this.runDailyMaintenance();
-  }
+  async runRollover() { return this.runDailyMaintenance(); }
 
   // ==================== TASK COMPLETION ====================
 
-  /**
-   * Complete a task.
-   * - If task has started_at (from Start Work / Focus), compute actual from timestamps
-   * - If actual_bucket is explicitly provided, use that
-   * - Otherwise, use estimate_bucket as the consumed time (for capacity math)
-   * Only records calibration from clean start/done pairs or explicit actual.
-   */
   async completeTask(id, actual_bucket = null, skipRecurrence = false) {
     const item = await this.getItem(id);
     if (!item) return null;
 
     const now = new Date();
     let finalActual = actual_bucket;
-    let calibrate = !!actual_bucket; // explicitly provided = calibrate
+    let calibrate = !!actual_bucket;
 
-    // If task was started (Start Work / Focus), compute actual from timestamps
     if (!finalActual && item.started_at) {
-      const startedAt = new Date(item.started_at);
-      const rawMinutes = Math.round((now - startedAt) / 60000);
-      if (rawMinutes > 0 && rawMinutes <= 480) { // sanity: max 8 hours
+      const rawMinutes = Math.round((now - new Date(item.started_at)) / 60000);
+      if (rawMinutes > 0 && rawMinutes <= 480) {
         finalActual = rawMinutes;
-        calibrate = true; // clean start/done pair = good calibration data
+        calibrate = true;
       }
     }
 
-    // Fall back to estimate for capacity math
     finalActual = finalActual || item.estimate_bucket || 0;
 
-    // Only calibrate from clean data (start/done pair or explicit actual)
     if (calibrate && item.estimate_bucket && finalActual > 0) {
       await this.addCalibrationEntry(item.tag, item.estimate_bucket, finalActual);
     }
 
-    // Create next recurring instance if task is recurring (unless skipping)
     if (item.recurrence && !skipRecurrence) {
       await this.createNextRecurringTask(item);
     }
 
     return this.updateItem(id, {
-      status: 'done',
-      actual_bucket: finalActual,
-      completed_at: now.toISOString(),
-      started_at: null, // clear start marker
-      isTop3: false,
-      top3Order: null,
-      top3Date: null,
-      top3Locked: false
+      status: 'done', actual_bucket: finalActual,
+      completed_at: now.toISOString(), started_at: null,
+      ...BattlePlanDB.CLEAR_TOP3
     });
   }
 
-  /**
-   * Mark a task as "started" - records timestamp for accurate time tracking.
-   */
   async startWork(id) {
-    return this.updateItem(id, {
-      started_at: new Date().toISOString()
-    });
+    return this.updateItem(id, { started_at: new Date().toISOString() });
   }
 
   // ==================== SCHEDULE DRIFT ====================
 
-  /**
-   * Check if the day is running behind schedule.
-   *
-   * Drift = elapsed time since first completion - sum of estimates for completed tasks.
-   * If drift > threshold (e.g., 15 min), the user is behind and should rerack.
-   *
-   * Returns { drifting, driftMinutes, elapsedMinutes, completedEstimateMinutes }
-   * or null if we can't compute drift (no completions yet).
-   */
   async checkScheduleDrift() {
     const today = this.getToday();
     const allItems = await this.getAllItems();
 
-    // Find completed tasks today with timestamps
     const doneToday = allItems.filter(i =>
-      i.status === 'done' &&
-      i.completed_at && i.completed_at.startsWith(today)
+      i.status === 'done' && i.completed_at && i.completed_at.startsWith(today)
     );
-
     if (doneToday.length === 0) return null;
 
-    // Sort by completed_at to find first and last
     doneToday.sort((a, b) => new Date(a.completed_at) - new Date(b.completed_at));
+    const elapsedMinutes = Math.round((new Date() - new Date(doneToday[0].completed_at)) / 60000);
 
-    const firstCompletedAt = new Date(doneToday[0].completed_at);
-    const now = new Date();
-    const elapsedMinutes = Math.round((now - firstCompletedAt) / 60000);
-
-    // Sum of estimates for completed tasks (what we "planned" for those tasks)
     let completedEstimateMinutes = 0;
     for (const item of doneToday) {
       completedEstimateMinutes += item.estimate_bucket || 0;
     }
 
-    // Drift = how much more time has passed than what the completed tasks should have taken
     const driftMinutes = elapsedMinutes - completedEstimateMinutes;
-
-    // Threshold: 15 minutes or 25% of completed estimates, whichever is larger
     const threshold = Math.max(15, completedEstimateMinutes * 0.25);
-    const drifting = driftMinutes > threshold;
 
-    return { drifting, driftMinutes, elapsedMinutes, completedEstimateMinutes };
+    return { drifting: driftMinutes > threshold, driftMinutes, elapsedMinutes, completedEstimateMinutes };
   }
 
-  /**
-   * Archive old done tasks (older than specified days)
-   */
   async archiveDoneTasks(olderThanDays = 30) {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
-
     const items = await this.getAllItems();
     const toArchive = items.filter(item =>
-      item.status === 'done' &&
-      !item.archived &&
-      new Date(item.updated_at) < cutoffDate
+      item.status === 'done' && !item.archived && new Date(item.updated_at) < cutoffDate
     );
-
     let archived = 0;
     for (const item of toArchive) {
       await this.updateItem(item.id, { archived: true });
       archived++;
     }
-
     return archived;
   }
 
-  /**
-   * Get done items (exclude archived by default)
-   */
   async getDoneItems(includeArchived = false) {
     const items = await this.getAllItems();
-    return items.filter(item =>
-      item.status === 'done' &&
-      (includeArchived || !item.archived)
-    );
+    return items.filter(item => item.status === 'done' && (includeArchived || !item.archived));
   }
 
   async createNextRecurringTask(originalItem) {
     const nextDate = this.getNextRecurrenceDate(originalItem);
     const now = new Date().toISOString();
-
     const newItem = {
       id: this.generateId(),
-      text: originalItem.text,
-      status: 'next', // Recurring tasks go to Next by default
-      tag: originalItem.tag,
-      next_action: originalItem.next_action,
-      // Copy ACE+LMT scores
-      A: originalItem.A,
-      C: originalItem.C,
-      E: originalItem.E,
-      L: originalItem.L,
-      M: originalItem.M,
-      T: originalItem.T,
-      // Copy time planning
-      estimate_bucket: originalItem.estimate_bucket,
-      confidence: originalItem.confidence,
+      text: originalItem.text, status: 'next',
+      tag: originalItem.tag, next_action: originalItem.next_action,
+      A: originalItem.A, C: originalItem.C, E: originalItem.E,
+      L: originalItem.L, M: originalItem.M, T: originalItem.T,
+      estimate_bucket: originalItem.estimate_bucket, confidence: originalItem.confidence,
       actual_bucket: null,
-      // Reset Top 3
-      isTop3: false,
-      top3Order: null,
-      top3Date: null,
-      top3Locked: false,
-      // Set next scheduled date
-      scheduled_for_date: nextDate,
-      dueDate: null,
-      // Copy recurrence settings
-      recurrence: originalItem.recurrence,
-      recurrence_day: originalItem.recurrence_day,
-      waiting_on: null,
-      // Timestamps
-      created_at: now,
-      updated_at: now
+      ...BattlePlanDB.CLEAR_TOP3,
+      scheduled_for_date: nextDate, dueDate: null,
+      recurrence: originalItem.recurrence, recurrence_day: originalItem.recurrence_day,
+      waiting_on: null, notes: null, parent_id: null,
+      created_at: now, updated_at: now
     };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.add(newItem);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(newItem);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('items', 'readwrite', s => s.add(newItem));
+    this.scheduleAutoBackup();
+    return newItem;
   }
 
   getNextRecurrenceDate(item) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     let nextDate = new Date(today);
 
     switch (item.recurrence) {
       case 'daily':
         nextDate.setDate(nextDate.getDate() + 1);
         break;
-
-      case 'weekly':
-        // Find next occurrence of the specified day
-        const targetDay = item.recurrence_day || 0; // 0 = Sunday
+      case 'weekly': {
+        const targetDay = item.recurrence_day || 0;
         let daysUntilNext = targetDay - today.getDay();
         if (daysUntilNext <= 0) daysUntilNext += 7;
         nextDate.setDate(nextDate.getDate() + daysUntilNext);
         break;
-
-      case 'monthly':
-        // Next month on the same date (handle month-end edge cases)
+      }
+      case 'monthly': {
         const targetDate = item.recurrence_day || today.getDate();
-        // Set to 1st first to avoid overflow when changing months (e.g., Jan 31 -> Mar 3)
         nextDate.setDate(1);
         nextDate.setMonth(nextDate.getMonth() + 1);
-        // Get days in the target month
         const daysInMonth = new Date(nextDate.getFullYear(), nextDate.getMonth() + 1, 0).getDate();
         nextDate.setDate(Math.min(targetDate, daysInMonth));
         break;
-
+      }
       default:
         nextDate.setDate(nextDate.getDate() + 1);
     }
@@ -1615,43 +1046,19 @@ class BattlePlanDB {
 
   getPresets() {
     return {
-      'mission-critical': {
-        name: 'Mission-critical now',
-        A: 5, C: 5, E: 3, L: 1, M: 1, T: 1,
-        estimate_bucket: 60, confidence: 'medium'
-      },
-      'money-maker': {
-        name: 'Money-maker',
-        A: 5, C: 4, E: 2, L: 1, M: 2, T: 1,
-        estimate_bucket: 60, confidence: 'medium'
-      },
-      'admin-tax': {
-        name: 'Admin tax',
-        A: 3, C: 4, E: 4, L: 0, M: 1, T: 0,
-        estimate_bucket: 90, confidence: 'low'
-      },
-      'quick-win': {
-        name: 'Quick win',
-        A: 2, C: 3, E: 1, L: 0, M: 2, T: 2,
-        estimate_bucket: 15, confidence: 'high'
-      },
-      'waiting-on-others': {
-        name: 'Waiting on others',
-        A: 3, C: 3, E: 2, L: 0, M: 0, T: 2,
-        estimate_bucket: 15, confidence: 'high',
-        status: 'waiting'
-      }
+      'mission-critical': { name: 'Mission-critical now', A: 5, C: 5, E: 3, L: 1, M: 1, T: 1, estimate_bucket: 60, confidence: 'medium' },
+      'money-maker': { name: 'Money-maker', A: 5, C: 4, E: 2, L: 1, M: 2, T: 1, estimate_bucket: 60, confidence: 'medium' },
+      'admin-tax': { name: 'Admin tax', A: 3, C: 4, E: 4, L: 0, M: 1, T: 0, estimate_bucket: 90, confidence: 'low' },
+      'quick-win': { name: 'Quick win', A: 2, C: 3, E: 1, L: 0, M: 2, T: 2, estimate_bucket: 15, confidence: 'high' },
+      'waiting-on-others': { name: 'Waiting on others', A: 3, C: 3, E: 2, L: 0, M: 0, T: 2, estimate_bucket: 15, confidence: 'high', status: 'waiting' }
     };
   }
 
   async applyPreset(id, presetKey) {
-    const presets = this.getPresets();
-    const preset = presets[presetKey];
+    const preset = this.getPresets()[presetKey];
     if (!preset) return null;
-
     const updates = { ...preset };
     delete updates.name;
-
     return this.updateItem(id, updates);
   }
 
@@ -1660,12 +1067,10 @@ class BattlePlanDB {
   async searchItems(query, status = null) {
     const items = await this.getAllItems();
     const q = query.toLowerCase().trim();
-
     return items.filter(item => {
       const matchesText = item.text.toLowerCase().includes(q) ||
-                          (item.next_action && item.next_action.toLowerCase().includes(q));
-      const matchesStatus = status === null || item.status === status;
-      return matchesText && matchesStatus;
+        (item.next_action && item.next_action.toLowerCase().includes(q));
+      return matchesText && (status === null || item.status === status);
     });
   }
 
@@ -1673,78 +1078,38 @@ class BattlePlanDB {
 
   async addRoutine(name) {
     await this.ready;
-    const routine = {
-      id: this.generateId(),
-      name: name.trim(),
-      items: [],
-      created: new Date().toISOString()
-    };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('routines', 'readwrite');
-      const store = tx.objectStore('routines');
-      const request = store.add(routine);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(routine);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    const routine = { id: this.generateId(), name: name.trim(), items: [], created: new Date().toISOString() };
+    await this._req('routines', 'readwrite', s => s.add(routine));
+    this.scheduleAutoBackup();
+    return routine;
   }
 
   async getRoutine(id) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('routines', 'readonly');
-      const store = tx.objectStore('routines');
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    return this._req('routines', 'readonly', s => s.get(id));
   }
 
   async updateRoutine(id, updates) {
     await this.ready;
     const routine = await this.getRoutine(id);
     if (!routine) return null;
-
     const updated = { ...routine, ...updates };
-
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('routines', 'readwrite');
-      const store = tx.objectStore('routines');
-      const request = store.put(updated);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(updated);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('routines', 'readwrite', s => s.put(updated));
+    this.scheduleAutoBackup();
+    return updated;
   }
 
   async deleteRoutine(id) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('routines', 'readwrite');
-      const store = tx.objectStore('routines');
-      const request = store.delete(id);
-      request.onsuccess = () => {
-        this.scheduleAutoBackup();
-        resolve(true);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('routines', 'readwrite', s => s.delete(id));
+    this.scheduleAutoBackup();
+    return true;
   }
 
   async getAllRoutines() {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('routines', 'readonly');
-      const store = tx.objectStore('routines');
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
+    const result = await this._req('routines', 'readonly', s => s.getAll());
+    return result || [];
   }
 
   async runRoutine(id) {
@@ -1757,13 +1122,10 @@ class BattlePlanDB {
     const createdItems = [];
 
     for (const entry of routine.items) {
-      // Support both legacy string items and rich template items
       const isTemplate = typeof entry === 'object' && entry !== null;
       const text = isTemplate ? entry.text : entry;
-
       const item = await this.addItem(text);
 
-      // Build updates from template metadata
       const updates = {
         status: targetStatus,
         scheduled_for_date: targetStatus === 'today' ? today : null
@@ -1771,12 +1133,9 @@ class BattlePlanDB {
 
       if (isTemplate) {
         if (entry.tag) updates.tag = entry.tag;
-        if (entry.A != null) updates.A = entry.A;
-        if (entry.C != null) updates.C = entry.C;
-        if (entry.E != null) updates.E = entry.E;
-        if (entry.L != null) updates.L = entry.L;
-        if (entry.M != null) updates.M = entry.M;
-        if (entry.T != null) updates.T = entry.T;
+        for (const f of ['A', 'C', 'E', 'L', 'M', 'T']) {
+          if (entry[f] != null) updates[f] = entry[f];
+        }
         if (entry.estimate_bucket) updates.estimate_bucket = entry.estimate_bucket;
         if (entry.confidence) updates.confidence = entry.confidence;
         if (entry.recurrence) {
@@ -1787,7 +1146,6 @@ class BattlePlanDB {
 
       await this.updateItem(item.id, updates);
 
-      // Create subtasks if template has them
       if (isTemplate && Array.isArray(entry.subtasks)) {
         for (const subText of entry.subtasks) {
           if (typeof subText === 'string' && subText.trim()) {
@@ -1801,18 +1159,12 @@ class BattlePlanDB {
     return createdItems;
   }
 
-  /**
-   * Create a template item from an existing task (for Save as Template)
-   */
   itemToTemplate(item) {
     const template = { text: item.text };
     if (item.tag) template.tag = item.tag;
-    if (item.A != null) template.A = item.A;
-    if (item.C != null) template.C = item.C;
-    if (item.E != null) template.E = item.E;
-    if (item.L != null) template.L = item.L;
-    if (item.M != null) template.M = item.M;
-    if (item.T != null) template.T = item.T;
+    for (const f of ['A', 'C', 'E', 'L', 'M', 'T']) {
+      if (item[f] != null) template[f] = item[f];
+    }
     if (item.estimate_bucket) template.estimate_bucket = item.estimate_bucket;
     if (item.confidence) template.confidence = item.confidence;
     if (item.recurrence) {
@@ -1826,24 +1178,14 @@ class BattlePlanDB {
 
   async getSetting(key, defaultValue = null) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('settings', 'readonly');
-      const store = tx.objectStore('settings');
-      const request = store.get(key);
-      request.onsuccess = () => resolve(request.result?.value ?? defaultValue);
-      request.onerror = () => reject(request.error);
-    });
+    const result = await this._req('settings', 'readonly', s => s.get(key));
+    return result?.value ?? defaultValue;
   }
 
   async setSetting(key, value) {
     await this.ready;
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('settings', 'readwrite');
-      const store = tx.objectStore('settings');
-      const request = store.put({ key, value });
-      request.onsuccess = () => resolve(value);
-      request.onerror = () => reject(request.error);
-    });
+    await this._req('settings', 'readwrite', s => s.put({ key, value }));
+    return value;
   }
 
   // ==================== EXPORT/IMPORT ====================
@@ -1853,32 +1195,17 @@ class BattlePlanDB {
     const items = await this.getAllItems();
     const routines = await this.getAllRoutines();
 
-    // Get all settings
     const settings = {};
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       settings[key] = await this.getSetting(key, DEFAULT_SETTINGS[key]);
     }
 
-    // Get calibration history
-    const calibrationHistory = await new Promise((resolve, reject) => {
-      const tx = this.db.transaction('calibration_history', 'readonly');
-      const store = tx.objectStore('calibration_history');
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
+    const calibrationHistory = await this._req('calibration_history', 'readonly', s => s.getAll()) || [];
 
-    return {
-      version: 4,
-      exported: new Date().toISOString(),
-      items,
-      routines,
-      settings,
-      calibrationHistory
-    };
+    return { version: 4, exported: new Date().toISOString(), items, routines, settings, calibrationHistory };
   }
 
-  // Whitelist of allowed item fields (prevents prototype pollution)
+  // Whitelisted fields for import sanitization — prevents prototype pollution & XSS via imported JSON
   static ALLOWED_ITEM_FIELDS = new Set([
     'id', 'text', 'status', 'tag', 'next_action', 'notes',
     'A', 'C', 'E', 'L', 'M', 'T',
@@ -1890,18 +1217,12 @@ class BattlePlanDB {
     'created_at', 'updated_at', 'created'
   ]);
 
-  static ALLOWED_ROUTINE_FIELDS = new Set([
-    'id', 'name', 'items', 'created', 'created_at', 'updated_at'
-  ]);
-
-  static ALLOWED_CALIBRATION_FIELDS = new Set([
-    'id', 'tag', 'estimate_bucket', 'actual_bucket', 'completed_at'
-  ]);
-
+  static ALLOWED_ROUTINE_FIELDS = new Set(['id', 'name', 'items', 'created', 'created_at', 'updated_at']);
+  static ALLOWED_CALIBRATION_FIELDS = new Set(['id', 'tag', 'estimate_bucket', 'actual_bucket', 'completed_at']);
   static ALLOWED_SETTINGS_KEYS = new Set([
     'timerDefault', 'weekday_capacity_minutes', 'weekend_capacity_minutes',
     'always_plan_slack_percent', 'auto_roll_tomorrow_to_today', 'top3_auto_clear_daily',
-    'workday_start_hour', 'workday_end_hour'
+    'workday_start_hour', 'workday_end_hour', 'wake_word_enabled'
   ]);
 
   static VALID_STATUSES = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'];
@@ -1909,196 +1230,100 @@ class BattlePlanDB {
   static VALID_RECURRENCES = ['', 'daily', 'weekly', 'monthly', null];
   static VALID_TAGS = ['Home', 'Army', 'Business', 'Other'];
 
-  /**
-   * Safely copy only whitelisted fields from an object (prevents prototype pollution)
-   */
+  /** Strip unknown keys from an object — only keeps properties in the allowed Set */
+  _filterFields(obj, allowedSet) {
+    const result = {};
+    for (const key of Object.keys(obj)) {
+      if (allowedSet.has(key)) result[key] = obj[key];
+    }
+    return result;
+  }
+
   sanitizeItem(item) {
-    const sanitized = {};
-    for (const key of Object.keys(item)) {
-      if (BattlePlanDB.ALLOWED_ITEM_FIELDS.has(key)) {
-        sanitized[key] = item[key];
-      }
-    }
-    // Sanitize id - must be alphanumeric string only
-    if (sanitized.id) {
-      sanitized.id = String(sanitized.id).replace(/[^a-zA-Z0-9_-]/g, '');
-    }
-    if (!sanitized.id) {
-      sanitized.id = this.generateId();
-    }
-    // Sanitize tag - must be from valid list
-    if (sanitized.tag && !BattlePlanDB.VALID_TAGS.includes(sanitized.tag)) {
-      sanitized.tag = null;
-    }
-    // Sanitize text - strip HTML
-    if (sanitized.text) {
-      sanitized.text = String(sanitized.text).replace(/<[^>]*>/g, '');
-    }
+    const sanitized = this._filterFields(item, BattlePlanDB.ALLOWED_ITEM_FIELDS);
+    if (sanitized.id) sanitized.id = String(sanitized.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!sanitized.id) sanitized.id = this.generateId();
+    if (sanitized.tag && !BattlePlanDB.VALID_TAGS.includes(sanitized.tag)) sanitized.tag = null;
+    if (sanitized.text) sanitized.text = String(sanitized.text).replace(/<[^>]*>/g, '');
     return sanitized;
   }
 
   sanitizeRoutine(routine) {
-    const sanitized = {};
-    for (const key of Object.keys(routine)) {
-      if (BattlePlanDB.ALLOWED_ROUTINE_FIELDS.has(key)) {
-        sanitized[key] = routine[key];
-      }
-    }
-    // Sanitize id
-    if (sanitized.id) {
-      sanitized.id = String(sanitized.id).replace(/[^a-zA-Z0-9_-]/g, '');
-    }
-    if (!sanitized.id) {
-      sanitized.id = this.generateId();
-    }
-    // Sanitize name - strip HTML
-    if (sanitized.name) {
-      sanitized.name = String(sanitized.name).replace(/<[^>]*>/g, '');
-    }
-    // Sanitize items array - strip HTML from each
+    const sanitized = this._filterFields(routine, BattlePlanDB.ALLOWED_ROUTINE_FIELDS);
+    if (sanitized.id) sanitized.id = String(sanitized.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!sanitized.id) sanitized.id = this.generateId();
+    if (sanitized.name) sanitized.name = String(sanitized.name).replace(/<[^>]*>/g, '');
     if (Array.isArray(sanitized.items)) {
       sanitized.items = sanitized.items.map(i => String(i).replace(/<[^>]*>/g, ''));
     }
     return sanitized;
   }
 
-  /**
-   * Sanitize and validate calibration history entry
-   */
   sanitizeCalibrationEntry(entry) {
-    const sanitized = {};
-    for (const key of Object.keys(entry)) {
-      if (BattlePlanDB.ALLOWED_CALIBRATION_FIELDS.has(key)) {
-        sanitized[key] = entry[key];
-      }
-    }
+    const sanitized = this._filterFields(entry, BattlePlanDB.ALLOWED_CALIBRATION_FIELDS);
+    if (!sanitized.id || typeof sanitized.id !== 'string') sanitized.id = this.generateId();
 
-    // Validate required fields
-    if (!sanitized.id || typeof sanitized.id !== 'string') {
-      sanitized.id = this.generateId();
-    }
-
-    // Validate estimate_bucket (must be positive number)
     const estimate = parseInt(sanitized.estimate_bucket);
-    if (isNaN(estimate) || estimate <= 0) {
-      return null; // Invalid entry, skip it
-    }
+    if (isNaN(estimate) || estimate <= 0) return null;
     sanitized.estimate_bucket = estimate;
 
-    // Validate actual_bucket (must be positive number)
     const actual = parseInt(sanitized.actual_bucket);
-    if (isNaN(actual) || actual <= 0) {
-      return null; // Invalid entry, skip it
-    }
+    if (isNaN(actual) || actual <= 0) return null;
     sanitized.actual_bucket = actual;
 
-    // Validate tag (must be valid tag or default to 'Other')
-    if (!sanitized.tag || !BattlePlanDB.VALID_TAGS.includes(sanitized.tag)) {
-      sanitized.tag = 'Other';
-    }
-
-    // Validate completed_at (must be valid ISO date string)
-    if (!sanitized.completed_at || isNaN(Date.parse(sanitized.completed_at))) {
-      sanitized.completed_at = new Date().toISOString();
-    }
+    if (!sanitized.tag || !BattlePlanDB.VALID_TAGS.includes(sanitized.tag)) sanitized.tag = 'Other';
+    if (!sanitized.completed_at || isNaN(Date.parse(sanitized.completed_at))) sanitized.completed_at = new Date().toISOString();
 
     return sanitized;
   }
 
-  /**
-   * Validate item fields have correct types
-   */
   validateItemTypes(item) {
-    // Validate status
-    if (item.status && !BattlePlanDB.VALID_STATUSES.includes(item.status)) {
-      item.status = 'inbox';
-    }
-    // Validate confidence
-    if (item.confidence && !BattlePlanDB.VALID_CONFIDENCES.includes(item.confidence)) {
-      item.confidence = null;
-    }
-    // Validate recurrence
-    if (item.recurrence && !BattlePlanDB.VALID_RECURRENCES.includes(item.recurrence)) {
-      item.recurrence = null;
-    }
-    // Validate ACE scores (1-5)
+    if (item.status && !BattlePlanDB.VALID_STATUSES.includes(item.status)) item.status = 'inbox';
+    if (item.confidence && !BattlePlanDB.VALID_CONFIDENCES.includes(item.confidence)) item.confidence = null;
+    if (item.recurrence && !BattlePlanDB.VALID_RECURRENCES.includes(item.recurrence)) item.recurrence = null;
+
     for (const field of ['A', 'C', 'E']) {
       if (item[field] !== null && item[field] !== undefined) {
         const val = parseInt(item[field]);
-        if (isNaN(val) || val < 1 || val > 5) {
-          item[field] = null;
-        } else {
-          item[field] = val;
-        }
+        item[field] = (isNaN(val) || val < 1 || val > 5) ? null : val;
       }
     }
-    // Validate LMT scores (0-2)
     for (const field of ['L', 'M', 'T']) {
       if (item[field] !== null && item[field] !== undefined) {
         const val = parseInt(item[field]);
-        if (isNaN(val) || val < 0 || val > 2) {
-          item[field] = null;
-        } else {
-          item[field] = val;
-        }
+        item[field] = (isNaN(val) || val < 0 || val > 2) ? null : val;
       }
     }
-    // Validate estimate_bucket
     if (item.estimate_bucket !== null && item.estimate_bucket !== undefined) {
       const val = parseInt(item.estimate_bucket);
-      if (isNaN(val) || val < 0) {
-        item.estimate_bucket = null;
-      } else {
-        item.estimate_bucket = val;
-      }
+      item.estimate_bucket = (isNaN(val) || val < 0) ? null : val;
     }
-    // Validate recurrence_day (0-6 for weekly, 1-31 for monthly)
     if (item.recurrence_day !== null && item.recurrence_day !== undefined) {
       const val = parseInt(item.recurrence_day);
-      if (isNaN(val) || val < 0 || val > 31) {
-        item.recurrence_day = null;
-      } else {
-        item.recurrence_day = val;
-      }
+      item.recurrence_day = (isNaN(val) || val < 0 || val > 31) ? null : val;
     }
-    // Validate booleans
     item.isTop3 = !!item.isTop3;
     item.top3Locked = !!item.top3Locked;
     item.archived = !!item.archived;
-
     return item;
   }
 
   async importData(data, skipConfirm = false) {
     await this.ready;
+    if (!data || !data.version) throw new Error('Invalid backup file format');
+    if (data.version > 4) throw new Error(`Backup version ${data.version} is newer than supported. Please update the app.`);
 
-    if (!data || !data.version) {
-      throw new Error('Invalid backup file format');
-    }
-
-    // Version check
-    if (data.version > 4) {
-      throw new Error(`Backup version ${data.version} is newer than supported. Please update the app.`);
-    }
-
-    const clearStore = (storeName) => {
-      return new Promise((resolve, reject) => {
-        const tx = this.db.transaction(storeName, 'readwrite');
-        const store = tx.objectStore(storeName);
-        const request = store.clear();
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+    // Clear all stores
+    for (const store of ['items', 'routines', 'settings', 'calibration_history']) {
+      await new Promise((resolve, reject) => {
+        const tx = this.db.transaction(store, 'readwrite');
+        const r = tx.objectStore(store).clear();
+        r.onsuccess = () => resolve();
+        r.onerror = () => reject(r.error);
       });
-    };
+    }
 
-    await clearStore('items');
-    await clearStore('routines');
-    await clearStore('settings');
-    await clearStore('calibration_history');
-
-    // Import items with whitelist validation (prevents prototype pollution)
-    // Use a single transaction for all items; use put() and deduplicate IDs
-    // so a collision from sanitization doesn't abort the entire batch
+    // Import items
     if (data.items && data.items.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('items', 'readwrite');
@@ -2108,40 +1333,26 @@ class BattlePlanDB {
 
         const seenIds = new Set();
         for (const item of data.items) {
-          // Sanitize: only copy whitelisted fields
           const sanitized = this.sanitizeItem(item);
-
-          // Deduplicate: if sanitization caused an ID collision, generate a new one
-          if (seenIds.has(sanitized.id)) {
-            sanitized.id = this.generateId();
-          }
+          if (seenIds.has(sanitized.id)) sanitized.id = this.generateId();
           seenIds.add(sanitized.id);
 
-          // Apply defaults
           const itemWithDefaults = {
             A: null, C: null, E: null, L: null, M: null, T: null,
             estimate_bucket: null, confidence: null, actual_bucket: null,
-            next_action: null,
-            scheduled_for_date: null,
-            top3Date: null,
-            top3Locked: false,
-            archived: false,
+            next_action: null, scheduled_for_date: null,
+            top3Date: null, top3Locked: false, archived: false,
             created_at: sanitized.created || new Date().toISOString(),
             updated_at: new Date().toISOString(),
             ...sanitized
           };
-
-          // Validate types
           this.validateItemTypes(itemWithDefaults);
-
-          // Use put() instead of add() so duplicates overwrite rather than aborting
           store.put(itemWithDefaults);
         }
       });
     }
 
-    // Import routines with whitelist validation
-    // Use a single transaction; deduplicate IDs and use put() for safety
+    // Import routines
     if (data.routines && data.routines.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('routines', 'readwrite');
@@ -2151,16 +1362,10 @@ class BattlePlanDB {
 
         const seenIds = new Set();
         for (const routine of data.routines) {
-          // Sanitize: only copy whitelisted fields
           const sanitized = this.sanitizeRoutine(routine);
-
-          // Deduplicate IDs
-          if (seenIds.has(sanitized.id)) {
-            sanitized.id = this.generateId();
-          }
+          if (seenIds.has(sanitized.id)) sanitized.id = this.generateId();
           seenIds.add(sanitized.id);
 
-          // Validate routine items is an array of strings or template objects
           if (sanitized.items && Array.isArray(sanitized.items)) {
             sanitized.items = sanitized.items.filter(item =>
               typeof item === 'string' || (typeof item === 'object' && item !== null && typeof item.text === 'string')
@@ -2168,18 +1373,13 @@ class BattlePlanDB {
           } else {
             sanitized.items = [];
           }
-
-          // Validate name is a string
-          if (typeof sanitized.name !== 'string') {
-            sanitized.name = 'Imported Routine';
-          }
-
+          if (typeof sanitized.name !== 'string') sanitized.name = 'Imported Routine';
           store.put(sanitized);
         }
       });
     }
 
-    // Import settings with whitelist validation
+    // Import settings
     if (data.settings) {
       const settingsEntries = Object.entries(data.settings)
         .filter(([key]) => BattlePlanDB.ALLOWED_SETTINGS_KEYS.has(key));
@@ -2190,7 +1390,6 @@ class BattlePlanDB {
           const store = tx.objectStore('settings');
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
-
           for (const [key, value] of settingsEntries) {
             store.put({ key, value });
           }
@@ -2198,8 +1397,7 @@ class BattlePlanDB {
       }
     }
 
-    // Import calibration history with validation
-    // Use a single transaction for all calibration entries
+    // Import calibration history
     if (data.calibrationHistory && data.calibrationHistory.length > 0) {
       await new Promise((resolve, reject) => {
         const tx = this.db.transaction('calibration_history', 'readwrite');
@@ -2209,16 +1407,10 @@ class BattlePlanDB {
 
         const seenIds = new Set();
         for (const entry of data.calibrationHistory) {
-          // Sanitize and validate entry
           const sanitized = this.sanitizeCalibrationEntry(entry);
-          if (!sanitized) continue; // Skip invalid entries
-
-          // Deduplicate IDs
-          if (seenIds.has(sanitized.id)) {
-            sanitized.id = this.generateId();
-          }
+          if (!sanitized) continue;
+          if (seenIds.has(sanitized.id)) sanitized.id = this.generateId();
           seenIds.add(sanitized.id);
-
           store.put(sanitized);
         }
       });
@@ -2227,7 +1419,7 @@ class BattlePlanDB {
     return true;
   }
 
-  // ==================== DEV TEST HARNESS ====================
+  // ==================== DIAGNOSTICS ====================
 
   async runDiagnostics() {
     const today = this.getToday();
@@ -2236,60 +1428,40 @@ class BattlePlanDB {
     const top3Items = await this.getTop3Items();
     const usableCapacity = await this.getUsableCapacity();
 
-    // Count stats
     const ratedItems = todayItems.filter(i => this.isRated(i));
     const unratedItems = todayItems.filter(i => !this.isRated(i));
     const overdueItems = allItems.filter(i => this.isOverdue(i));
     const monsterItems = todayItems.filter(i => this.isMonster(i));
 
-    // Calculate buffered time for top 3
     let top3BufferedTotal = 0;
     for (const item of top3Items) {
-      const buffered = await this.getBufferedMinutes(item);
-      top3BufferedTotal += buffered || 0;
+      top3BufferedTotal += (await this.getBufferedMinutes(item)) || 0;
     }
 
-    // Sample sort order (first 5)
-    const sorted = ratedItems
-      .map(item => ({
-        text: item.text.substring(0, 30),
-        score: this.calculateScores(item).priority_score,
-        isMonster: this.isMonster(item),
-        isUrgent: item.C === 5
-      }))
-      .sort((a, b) => {
-        if (a.isUrgent && !b.isUrgent) return -1;
-        if (!a.isUrgent && b.isUrgent) return 1;
-        return (b.score || 0) - (a.score || 0);
-      })
-      .slice(0, 5);
+    const mapped = ratedItems.map(item => ({
+      text: item.text.substring(0, 30),
+      score: this.calculateScores(item).priority_score,
+      isMonster: this.isMonster(item),
+      isUrgent: item.C === 5
+    }));
+    this._sortByUrgencyAndScore(mapped, 'score');
+    const sorted = mapped.slice(0, 5);
 
-    const diagnostics = {
-      date: today,
-      totalItems: allItems.length,
-      todayCount: todayItems.length,
-      ratedCount: ratedItems.length,
-      unratedCount: unratedItems.length,
-      overdueCount: overdueItems.length,
-      monsterCount: monsterItems.length,
-      top3Count: top3Items.length,
-      top3BufferedTotal,
-      usableCapacity,
+    return {
+      date: today, totalItems: allItems.length,
+      todayCount: todayItems.length, ratedCount: ratedItems.length,
+      unratedCount: unratedItems.length, overdueCount: overdueItems.length,
+      monsterCount: monsterItems.length, top3Count: top3Items.length,
+      top3BufferedTotal, usableCapacity,
       capacityUsedPercent: Math.round((top3BufferedTotal / usableCapacity) * 100),
       sampleSortOrder: sorted
     };
-
-    // Return diagnostics without logging sensitive data to console
-    return diagnostics;
   }
 
   // ==================== AUTO-BACKUP ====================
 
   scheduleAutoBackup() {
-    // Debounce - wait 5 seconds after last change before backing up
-    if (this.autoBackupTimeout) {
-      clearTimeout(this.autoBackupTimeout);
-    }
+    if (this.autoBackupTimeout) clearTimeout(this.autoBackupTimeout);
     this.autoBackupTimeout = setTimeout(() => this.performAutoBackup(), 5000);
   }
 
@@ -2298,21 +1470,9 @@ class BattlePlanDB {
       await this.ready;
       const data = await this.exportData();
       const backups = await this.getAutoBackups();
-
-      // Add new backup with timestamp
-      backups.unshift({
-        timestamp: new Date().toISOString(),
-        data: data
-      });
-
-      // Keep only last 3 backups
-      while (backups.length > 3) {
-        backups.pop();
-      }
-
-      // Store in IndexedDB settings (more secure than localStorage)
+      backups.unshift({ timestamp: new Date().toISOString(), data });
+      while (backups.length > 3) backups.pop();
       await this.setSetting('_autoBackups', backups);
-      // Auto-backup completed silently
     } catch (e) {
       // Silently fail - auto-backup is non-critical
     }
@@ -2320,16 +1480,11 @@ class BattlePlanDB {
 
   async getAutoBackups() {
     await this.ready;
-    // Try IndexedDB first (new secure location)
     const idbBackups = await this.getSetting('_autoBackups', null);
-    if (idbBackups) {
-      return idbBackups;
-    }
-    // Fall back to localStorage for migration (one-time)
+    if (idbBackups) return idbBackups;
     const lsBackups = localStorage.getItem('battlePlanAutoBackups');
     if (lsBackups) {
       const parsed = JSON.parse(lsBackups);
-      // Migrate to IndexedDB and clear localStorage
       await this.setSetting('_autoBackups', parsed);
       localStorage.removeItem('battlePlanAutoBackups');
       return parsed;
@@ -2347,8 +1502,5 @@ class BattlePlanDB {
   }
 }
 
-// Constants export
 const BUCKETS = ESTIMATE_BUCKETS;
-
-// Global database instance
 const db = new BattlePlanDB();

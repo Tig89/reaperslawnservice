@@ -1,6 +1,5 @@
 /**
  * Groq AI Integration for Battle Plan
- * Enables intelligent hands-free voice commands using Groq's fast inference
  * Uses llama-3.1-8b-instant for minimal latency
  */
 
@@ -12,7 +11,6 @@ const GROQ_ENABLED_KEY = 'battlePlanGroqEnabled';
 class GroqAssistant {
   constructor() {
     this.apiKey = localStorage.getItem(GROQ_STORAGE_KEY) || '';
-    // Default to enabled if not explicitly set
     const storedEnabled = localStorage.getItem(GROQ_ENABLED_KEY);
     this.enabled = storedEnabled === null ? true : storedEnabled === 'true';
   }
@@ -22,35 +20,54 @@ class GroqAssistant {
     localStorage.setItem(GROQ_ENABLED_KEY, enabled.toString());
   }
 
-  isEnabled() {
-    return this.enabled;
-  }
+  isEnabled() { return this.enabled; }
 
   setApiKey(key) {
     this.apiKey = key;
     localStorage.setItem(GROQ_STORAGE_KEY, key);
   }
 
-  getApiKey() {
-    return this.apiKey;
+  getApiKey() { return this.apiKey; }
+  hasApiKey() { return this.apiKey && this.apiKey.startsWith('gsk_'); }
+  shouldUseAI() { return this.enabled && this.hasApiKey(); }
+
+  /** Returns { today: 'YYYY-MM-DD', dayOfWeek: 'Monday' } for AI prompt context */
+  _todayInfo() {
+    const d = new Date();
+    return {
+      today: d.toISOString().split('T')[0],
+      dayOfWeek: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getDay()]
+    };
   }
 
-  hasApiKey() {
-    return this.apiKey && this.apiKey.startsWith('gsk_');
-  }
+  /**
+   * Core Groq API call — shared by parseIntent, parseTaskInput, generateStatsResponse.
+   * Throws on non-OK response so each caller can handle errors differently.
+   * Set json: true to request JSON output format from the model.
+   */
+  async _callGroq(messages, { temperature = 0.1, max_tokens = 200, json = false } = {}) {
+    const body = { model: GROQ_MODEL, messages, temperature, max_tokens };
+    if (json) body.response_format = { type: 'json_object' };
 
-  // Returns true if AI should be used (enabled + has key)
-  shouldUseAI() {
-    return this.enabled && this.hasApiKey();
+    const response = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) throw new Error(await response.text());
+    const result = await response.json();
+    return result.choices[0]?.message?.content || null;
   }
 
   /**
    * Parse user's voice input and determine intent + extract data
-   * Returns a structured command object
    */
   async parseIntent(userInput, context = {}) {
-    const today = new Date().toISOString().split('T')[0];
-    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+    const { today, dayOfWeek } = this._todayInfo();
 
     const systemPrompt = `You are a voice command parser for a task management app called Battle Plan. Today is ${today} (${dayOfWeek}).
 
@@ -107,39 +124,15 @@ Current context:
 Respond ONLY with valid JSON, no explanation. Example:
 {"intent": "add_task", "data": {"text": "Mow lawn", "scheduled_date": "2026-02-13", "due_date": null, "estimate_minutes": 60, "recurrence": "weekly", "recurrence_day": 5, "tag": "Home"}}`;
 
-    // Check if AI is enabled and configured
     if (!this.shouldUseAI()) {
-      // Return special intent to signal fallback to simple mode
       return { intent: 'disabled', data: { text: userInput }, error: this.enabled ? 'No API key configured' : 'AI disabled' };
     }
 
     try {
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userInput }
-          ],
-          temperature: 0.1,
-          max_tokens: 200,
-          response_format: { type: 'json_object' }
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        console.error('Groq API error:', error);
-        return { intent: 'unknown', data: {}, error: 'API error' };
-      }
-
-      const result = await response.json();
-      const content = result.choices[0]?.message?.content;
+      const content = await this._callGroq([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userInput }
+      ], { json: true });
 
       try {
         return JSON.parse(content);
@@ -155,13 +148,11 @@ Respond ONLY with valid JSON, no explanation. Example:
 
   /**
    * Parse a typed task input into structured data (NLP for inbox).
-   * Lighter prompt than parseIntent - only extracts task fields, no command routing.
    */
   async parseTaskInput(text) {
     if (!this.shouldUseAI()) return null;
 
-    const today = new Date().toISOString().split('T')[0];
-    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+    const { today, dayOfWeek } = this._todayInfo();
 
     const systemPrompt = `Parse this task input and extract structured data. Today is ${today} (${dayOfWeek}).
 
@@ -184,33 +175,13 @@ Rules:
 Respond ONLY with valid JSON.`;
 
     try {
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: text }
-          ],
-          temperature: 0.1,
-          max_tokens: 200,
-          response_format: { type: 'json_object' }
-        })
-      });
+      const content = await this._callGroq([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
+      ], { json: true });
 
-      if (!response.ok) return null;
-
-      const result = await response.json();
-      const content = result.choices[0]?.message?.content;
-      try {
-        return JSON.parse(content);
-      } catch (e) {
-        return null;
-      }
+      try { return JSON.parse(content); }
+      catch (e) { return null; }
     } catch (error) {
       return null;
     }
@@ -236,73 +207,33 @@ The user asked: "${query}"
 
 Respond conversationally and briefly.`;
 
-    // Check if AI is enabled and configured - fall back to static response if not
     if (!this.shouldUseAI()) {
       return this.getFallbackStatsResponse(stats, query);
     }
 
     try {
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: query }
-          ],
-          temperature: 0.7,
-          max_tokens: 100
-        })
-      });
+      const content = await this._callGroq([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: query }
+      ], { temperature: 0.7, max_tokens: 100 });
 
-      if (!response.ok) {
-        return this.getFallbackStatsResponse(stats, query);
-      }
-
-      const result = await response.json();
-      return result.choices[0]?.message?.content || this.getFallbackStatsResponse(stats, query);
+      return content || this.getFallbackStatsResponse(stats, query);
     } catch (error) {
       return this.getFallbackStatsResponse(stats, query);
     }
   }
 
-  /**
-   * Fallback stats response when AI is unavailable
-   */
   getFallbackStatsResponse(stats, query) {
     const q = query.toLowerCase();
-
-    if (q.includes('free time') || q.includes('available')) {
-      return `You have ${stats.freeTime} minutes of free time today.`;
-    }
-    if (q.includes('capacity')) {
-      return `Today's capacity is ${stats.capacity} minutes. Top 3 uses ${stats.top3Minutes} minutes.`;
-    }
-    if (q.includes('today') || q.includes('summary')) {
-      return `You have ${stats.todayCount} tasks today, ${stats.top3Count} in your Top 3.`;
-    }
-    if (q.includes('overdue')) {
-      return stats.overdueCount > 0
-        ? `You have ${stats.overdueCount} overdue tasks.`
-        : `No overdue tasks. Nice work!`;
-    }
-    if (q.includes('inbox')) {
-      return `You have ${stats.inboxCount} items in your inbox.`;
-    }
-    if (q.includes('tomorrow')) {
-      return `You have ${stats.tomorrowCount} tasks scheduled for tomorrow.`;
-    }
-
+    if (q.includes('free time') || q.includes('available')) return `You have ${stats.freeTime} minutes of free time today.`;
+    if (q.includes('capacity')) return `Today's capacity is ${stats.capacity} minutes. Top 3 uses ${stats.top3Minutes} minutes.`;
+    if (q.includes('today') || q.includes('summary')) return `You have ${stats.todayCount} tasks today, ${stats.top3Count} in your Top 3.`;
+    if (q.includes('overdue')) return stats.overdueCount > 0 ? `You have ${stats.overdueCount} overdue tasks.` : `No overdue tasks. Nice work!`;
+    if (q.includes('inbox')) return `You have ${stats.inboxCount} items in your inbox.`;
+    if (q.includes('tomorrow')) return `You have ${stats.tomorrowCount} tasks scheduled for tomorrow.`;
     return `Today: ${stats.todayCount} tasks, ${stats.top3Count} in Top 3, ${stats.freeTime} min free.`;
   }
 
-  /**
-   * Quick date calculation helper
-   */
   calculateDate(offset) {
     const d = new Date();
     d.setDate(d.getDate() + offset);
@@ -310,5 +241,4 @@ Respond conversationally and briefly.`;
   }
 }
 
-// Export singleton
 const groqAssistant = new GroqAssistant();

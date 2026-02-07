@@ -24,6 +24,7 @@
     <header id="header">
       <div class="header-top">
         <h1>Battle Plan</h1>
+        <span id="wake-word-indicator" class="wake-word-indicator hidden">🎤 Listening</span>
         <span id="offline-indicator" class="offline-indicator hidden">Offline</span>
       </div>
       <!-- HUD - Today Stats -->
@@ -322,6 +323,11 @@
             <span id="groq-key-status"></span>
           </div>
           <p class="setting-hint">Voice commands: "add task...", "go to today", "how many tasks?", "run grocery routine"</p>
+          <div class="setting-row">
+            <label>Wake word ("Hey Battle")</label>
+            <input type="checkbox" id="setting-wake-word">
+          </div>
+          <p class="setting-hint">Always-on listening. Say "Hey Battle" followed by a command — no need to tap the mic button. Uses more battery.</p>
         </div>
 
         <div class="settings-section">

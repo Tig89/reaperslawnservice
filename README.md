@@ -1,183 +1,195 @@
 # Battle Plan
 
-A simple, mobile-friendly PWA for daily life organization. Capture tasks, prioritize your Top 3, and focus on what matters.
+A mobile-friendly PWA for daily task management with ACE+LMT prioritization scoring, AI-powered voice input, capacity planning, and focus tools. Capture tasks, prioritize your Top 3, and execute.
 
 ## Features
 
-### Inbox
-- Quick capture with big input field
-- Keyboard shortcuts for fast triage:
-  - `T` - Mark as Today
-  - `N` - Mark as Next
-  - `W` - Mark as Waiting
-  - `S` - Mark as Someday
-  - `D` - Mark as Done
-  - `E` - Edit item
-  - `Delete` - Delete item
-- Tag items: Home, Army, Business
-- Add time estimates and due dates
+### Task Management
+- **Inbox** — Quick capture with smart parsing (AI or regex-based)
+- **Today / Tomorrow / Next / Waiting / Someday / Done** — Full task lifecycle
+- **Subtasks** — Break items into smaller pieces
+- **Recurring tasks** — Daily, weekly, or monthly recurrence
+- **Due dates** — Track deadlines with overdue warnings
+- **Tags** — Categorize as Home, Army, Business, or Other
+- **Swipe gestures** — Swipe to triage on mobile
+- **Undo** — 5-second undo window after status changes
 
-### Today
-- View all items marked for Today
-- **Lock Top 3 Priorities** (hard cap of 3)
-- See total estimated time for Today and Top 3
-- **Focus Mode**: Start a timer (25/50/custom minutes) and hide distractions
+### ACE+LMT Scoring
+Each task can be rated on six dimensions:
+- **A**ction clarity, **C**riticality, **E**ffort estimate
+- **L**everage, **M**omentum, **T**ime sensitivity
+
+Scores drive auto-scheduling, Top 3 suggestions, and capacity planning.
+
+### Top 3 Priorities
+- Lock up to 3 tasks as your daily focus
+- Manual or auto-suggested based on scores
+- Lock individual items to prevent auto-replacement
+- Monster task warnings (90+ minute estimates)
+
+### Capacity Planning
+- Set weekday/weekend capacity in minutes
+- Configurable slack percentage
+- **Auto-schedule** — Fits highest-priority tasks into available time, overflows the rest
+- **Time pressure detection** — Alerts when remaining tasks exceed remaining hours
+- **Reracking** — Automatically rebalances after completions or time pressure
+
+### Focus Mode
+- Pomodoro-style timer (25/50/custom minutes)
+- Pause and resume
+- Distraction-free interface during focus sessions
+
+### Voice Input
+- Hands-free task capture via Web Speech API
+- Natural language commands: "add", "finish", "move to tomorrow"
+- Works with or without AI — falls back to regex parsing offline
+
+### AI Integration (Optional)
+- **Groq API** (llama-3.1-8b-instant) for smart task parsing
+- Extracts dates, recurrence, tags, and time estimates from natural language
+- Voice command intent detection (add, complete, move, navigate, query)
+- AI-powered stats responses ("How's my day looking?")
+- Bring your own API key — disabled by default
 
 ### Routines
 - Create reusable checklist templates
-- Examples: Morning Reset, Evening Shutdown, Grocery Run
 - One-click "Run Routine" copies items to Today
+- Examples: Morning Reset, Evening Shutdown, Weekly Review
 
-### Data
-- **100% Local-first** - Your data stays on your device
-- Uses IndexedDB for storage
-- Export/Import JSON backups
-- Works completely offline
+### Analytics
+- Daily stats: rated/unrated, capacity usage, overdue count
+- Top 5 priorities by score
+- Monster task tracking
+
+### Themes
+- **Dark** (default) — Dark navy blue
+- **Light** — Clean white
+- **Matrix** — Green-on-black terminal aesthetic
+- **Windows 98** — Retro desktop style
+
+### Data & Privacy
+- **100% local-first** — All data stored in IndexedDB on your device
+- **Offline capable** — Service worker caches all assets (network-first strategy)
+- **Export/Import** — JSON backup and restore
+- **Auto-backup** — Automatic backup scheduling
+- **No tracking** — Zero analytics, no telemetry
+- **Security** — CSP headers, input sanitization, field whitelisting on import
+- Only external connection: Groq API (opt-in, requires your own key)
 
 ---
 
 ## Quick Start
 
-### Option 1: Local Development Server
+### Local Development
 
 ```bash
-# Using Python
+# Python
 python3 -m http.server 8080
 
-# Using Node.js (npx)
+# Node.js
 npx serve .
 
-# Using PHP
+# PHP
 php -S localhost:8080
 ```
 
-Then open `http://localhost:8080` in your browser.
+Open `http://localhost:8080` in your browser.
 
-### Option 2: Deploy to Web Server
+### Deploy
 
-Upload all files to any static web host:
-- GitHub Pages
-- Netlify
-- Vercel
-- Any web server (Apache, Nginx)
+Upload all files to any static host: GitHub Pages, Netlify, Vercel, or any web server.
 
-**Note:** PWAs require HTTPS in production (except localhost).
+**Note:** PWAs require HTTPS in production (localhost is exempt).
 
 ---
 
-## Install as PWA on Android
+## Install as PWA
 
-1. Open the app in Chrome on your Android device
-2. Tap the **three-dot menu** (⋮) in the top right
-3. Tap **"Add to Home Screen"** or **"Install App"**
-4. Confirm the installation
-5. The app will appear on your home screen with its icon
+### Android (Chrome)
+1. Open the app in Chrome
+2. Tap the three-dot menu > **"Install App"**
+3. Confirm — the app appears on your home screen
 
-### Install on iOS (Safari)
+### iOS (Safari)
+1. Open in Safari
+2. Tap **Share** > **"Add to Home Screen"** > **Add**
 
-1. Open the app in Safari
-2. Tap the **Share button** (square with arrow)
-3. Scroll down and tap **"Add to Home Screen"**
-4. Tap **"Add"**
-
-### Install on Desktop (Chrome/Edge)
-
-1. Open the app in Chrome or Edge
-2. Click the **install icon** in the address bar (or menu > Install)
+### Desktop (Chrome / Edge)
+1. Open in Chrome or Edge
+2. Click the install icon in the address bar
 3. Confirm installation
+
+---
+
+## Keyboard Shortcuts
+
+When a task is selected:
+| Key | Action |
+|-----|--------|
+| `T` | Move to Today |
+| `N` | Move to Next |
+| `W` | Move to Waiting |
+| `S` | Move to Someday |
+| `D` | Mark as Done |
+| `E` | Edit item |
+| `Delete` | Delete item |
 
 ---
 
 ## Project Structure
 
 ```
-battle-plan/
-├── index.html          # Main HTML shell
+reaperslawnservice/
+├── index.html          # Main HTML shell (single-page app)
 ├── manifest.json       # PWA manifest
-├── sw.js              # Service worker (offline support)
+├── sw.js               # Service worker (network-first caching)
 ├── css/
-│   └── styles.css     # All styles
+│   └── styles.css      # All styles + 4 themes
 ├── js/
-│   ├── db.js          # IndexedDB storage layer
-│   └── app.js         # Main application logic
+│   ├── app.js          # UI, events, rendering (~4,400 lines)
+│   ├── db.js           # IndexedDB layer, scoring, scheduling (~1,500 lines)
+│   ├── groq.js         # Groq AI integration (~240 lines)
+│   └── sw-register.js  # Service worker registration
 ├── icons/
-│   └── icon.svg       # App icon (SVG)
+│   └── icon.svg        # App icon
+├── LICENSE
 └── README.md
 ```
 
 ---
 
-## Generating PNG Icons
+## Daily Workflow
 
-For full PWA support, generate PNG icons from the SVG:
-
-### Using ImageMagick (CLI)
-
-```bash
-# Install ImageMagick first
-convert -background none icons/icon.svg -resize 192x192 icons/icon-192.png
-convert -background none icons/icon.svg -resize 512x512 icons/icon-512.png
-```
-
-### Using Online Tools
-
-1. Go to [realfavicongenerator.net](https://realfavicongenerator.net/)
-2. Upload `icons/icon.svg`
-3. Download the generated icons
-4. Replace files in `icons/` folder
+1. **Capture** — Dump tasks into Inbox (type or voice)
+2. **Triage** — Move to Today, Next, Waiting, or Someday
+3. **Rate** — Score tasks with ACE+LMT for smart prioritization
+4. **Lock Top 3** — Pick (or auto-suggest) your three priorities
+5. **Focus** — Use the timer, work through #1, #2, #3
+6. **Review** — Mark done, check analytics, plan tomorrow
 
 ---
 
-## Usage Tips
+## Backup & Restore
 
-### Daily Workflow
+1. Go to **Settings**
+2. Tap **Export JSON** to download a backup
+3. To restore: tap **Import JSON** and select the file
 
-1. **Morning**: Capture everything in Inbox
-2. **Triage**: Use keyboard shortcuts to categorize (T/N/W/S)
-3. **Prioritize**: Go to Today, lock your Top 3
-4. **Execute**: Use Focus mode to work without distractions
-5. **Evening**: Review, mark done, plan tomorrow
-
-### Keyboard Flow
-
-When an item is selected in Inbox:
-- Press `T` → marks as Today
-- Press `N` → marks as Next (do soon)
-- Press `W` → marks as Waiting (blocked)
-- Press `S` → marks as Someday (maybe later)
-- Press `D` → marks as Done
-
-### Routines
-
-Create routines for repeated tasks:
-- **Morning Reset**: Review calendar, check email, plan day
-- **Evening Shutdown**: Clear inbox, review tomorrow, gratitude
-- **Weekly Review**: Review projects, update lists, plan week
+Backups include all tasks, routines, settings, and calibration history.
 
 ---
 
-## Backup Your Data
+## Technical Details
 
-1. Go to **Settings** (gear icon)
-2. Click **Export JSON**
-3. Save the file somewhere safe
-
-To restore:
-1. Click **Import JSON**
-2. Select your backup file
-
----
-
-## Technical Notes
-
-- **Storage**: IndexedDB (no size limits like localStorage)
-- **Offline**: Service Worker caches all assets
-- **No tracking**: Zero analytics or external requests
-- **No frameworks**: Pure vanilla JavaScript (~500 lines)
+- **Storage**: IndexedDB v4 (items, routines, settings, calibration_history)
+- **Offline**: Service worker with network-first strategy, full offline fallback
+- **Security**: Content Security Policy, X-Frame-Options DENY, input sanitization, field whitelisting
+- **AI**: Groq API (llama-3.1-8b-instant) — optional, bring your own key
+- **Voice**: Web Speech API (browser-native, no external service)
+- **Frameworks**: None — pure vanilla JavaScript, zero dependencies
 
 ---
 
 ## License
 
-MIT License - Use freely for personal or commercial projects.
-
+MIT License — see [LICENSE](LICENSE) for details.

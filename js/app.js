@@ -84,6 +84,11 @@ class BattlePlanApp {
     this.voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
     this.voiceStartLock = false;
 
+    // Wake word state
+    this.wakeWordEnabled = false;
+    this.wakeWordRecognition = null;
+    this.wakeWordActive = false;
+
     // Undo state
     this.lastAction = null; // { type, itemId, previousState, description }
     this.undoTimeout = null;
@@ -114,6 +119,40 @@ class BattlePlanApp {
     this.initOnboarding();
   }
 
+  /** Re-render the current page and update the HUD stats bar */
+  async _refreshUI() {
+    await this.render();
+    await this.updateHUD();
+  }
+
+  /** Apply AI/regex-parsed metadata (date, recurrence, tag, estimate) to a newly created task */
+  async _applyParsedData(itemId, data) {
+    const updates = {};
+    if (data.scheduled_date) {
+      updates.scheduled_for_date = data.scheduled_date;
+      const today = db.getToday();
+      const tomorrow = db.getTomorrow();
+      if (data.scheduled_date === today) updates.status = 'today';
+      else if (data.scheduled_date === tomorrow) updates.status = 'tomorrow';
+      else updates.status = 'next';
+    }
+    if (data.due_date) updates.dueDate = data.due_date;
+    if (data.estimate_minutes) {
+      updates.estimate_bucket = data.estimate_minutes;
+      updates.confidence = 'medium';
+    }
+    if (data.recurrence) {
+      updates.recurrence = data.recurrence;
+      if (data.recurrence_day != null) updates.recurrence_day = data.recurrence_day;
+    }
+    if (data.tag && CONSTANTS.VALID_TAGS.includes(data.tag)) {
+      updates.tag = data.tag;
+    }
+    if (Object.keys(updates).length > 0) {
+      await db.updateItem(itemId, updates);
+    }
+  }
+
   async init() {
     await db.ready;
 
@@ -140,6 +179,12 @@ class BattlePlanApp {
 
     // Load Groq AI settings
     this.loadGroqSettings();
+
+    // Load wake word setting
+    this.wakeWordEnabled = await db.getSetting('wake_word_enabled', false);
+    if (this.wakeWordEnabled && this.voiceSupported) {
+      this.startWakeWord();
+    }
 
     // Handle initial page from URL hash (for back button support)
     const hash = window.location.hash.slice(1);
@@ -427,11 +472,20 @@ class BattlePlanApp {
       db.setSetting('swipe_threshold', this.swipeThreshold);
     });
 
+    // Wake word toggle
+    document.getElementById('setting-wake-word').addEventListener('change', (e) => {
+      this.wakeWordEnabled = e.target.checked;
+      db.setSetting('wake_word_enabled', e.target.checked);
+      if (e.target.checked) {
+        this.startWakeWord();
+      } else {
+        this.stopWakeWord();
+      }
+    });
+
     // Theme toggle
-    document.getElementById('theme-dark').addEventListener('click', () => this.setTheme('dark'));
-    document.getElementById('theme-light').addEventListener('click', () => this.setTheme('light'));
-    document.getElementById('theme-matrix').addEventListener('click', () => this.setTheme('matrix'));
-    document.getElementById('theme-win98').addEventListener('click', () => this.setTheme('win98'));
+    for (const t of ['dark', 'light', 'matrix', 'win98'])
+      document.getElementById(`theme-${t}`).addEventListener('click', () => this.setTheme(t));
 
     // Notification settings
     document.getElementById('setting-notifications').addEventListener('change', (e) => {
@@ -592,6 +646,9 @@ class BattlePlanApp {
     document.getElementById('setting-top3-clear').checked = top3Clear;
     document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
     document.getElementById('setting-swipe-threshold').value = swipeThreshold.toString();
+
+    // Wake word setting
+    document.getElementById('setting-wake-word').checked = this.wakeWordEnabled;
 
     // Load notification setting
     document.getElementById('setting-notifications').checked = this.notificationsEnabled;
@@ -1244,8 +1301,7 @@ class BattlePlanApp {
           const id = tomorrowBtn.closest('.item').dataset.id;
           (async () => {
             await db.setTomorrow(id);
-            await this.render();
-            await this.updateHUD();
+            await this._refreshUI();
           })();
           return;
         }
@@ -1420,8 +1476,7 @@ class BattlePlanApp {
         this.animateSwipeOut(wrapper, 'left').then(async () => {
           await this.saveForUndo(itemId, 'Moved to Tomorrow');
           await db.setTomorrow(itemId);
-          await this.render();
-          await this.updateHUD();
+          await this._refreshUI();
           this.showUndoToast('Moved to Tomorrow');
         });
       }
@@ -1522,8 +1577,7 @@ class BattlePlanApp {
       case 'tomorrow':
         await this.saveForUndo(itemId, 'Moved to Tomorrow');
         await db.setTomorrow(itemId);
-        await this.render();
-        await this.updateHUD();
+        await this._refreshUI();
         this.showUndoToast('Moved to Tomorrow');
         break;
       case 'edit':
@@ -1589,6 +1643,9 @@ class BattlePlanApp {
       return;
     }
 
+    // Pause wake word while using manual mic button
+    if (this.wakeWordActive) this.pauseWakeWord();
+
     // Lock to prevent double-start
     this.voiceStartLock = true;
     this.isListening = true;
@@ -1632,6 +1689,133 @@ class BattlePlanApp {
     } catch (err) {
       // Ignore errors when stopping
     }
+
+    // Resume wake word listening if it was active before this command
+    if (this.wakeWordEnabled) {
+      this.restartWakeWord();
+    }
+  }
+
+  // ==================== WAKE WORD ("Hey Battle") ====================
+
+  /** Start always-on background listening for the wake phrase "Hey Battle" */
+  startWakeWord() {
+    if (!this.voiceSupported) return;
+    if (this.wakeWordActive) return;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    this.wakeWordRecognition = new SpeechRecognition();
+    this.wakeWordRecognition.continuous = true;
+    this.wakeWordRecognition.interimResults = true;
+    this.wakeWordRecognition.lang = 'en-US';
+
+    this.wakeWordRecognition.onresult = (event) => {
+      // Check all results for the wake phrase
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript.toLowerCase().trim();
+
+        // Look for "hey battle" in the transcript
+        const wakeIndex = transcript.indexOf('hey battle');
+        if (wakeIndex === -1) continue;
+
+        // Extract the command after "hey battle"
+        const afterWake = transcript.substring(wakeIndex + 10).trim();
+
+        // Only process final results (user finished speaking)
+        if (event.results[i].isFinal) {
+          // Pause wake word listener while we process the command
+          this.pauseWakeWord();
+
+          if (afterWake.length > 0) {
+            // Got "hey battle <command>" — process immediately
+            this.showToast('Processing...', 'listening');
+            this.handleVoiceResult(afterWake);
+          } else {
+            // Got just "hey battle" — start regular voice input for the next phrase
+            this.showToast('Yes? Go ahead...', 'listening');
+            this.startVoiceInputForWakeWord();
+          }
+          return;
+        }
+      }
+    };
+
+    this.wakeWordRecognition.onerror = (event) => {
+      debugLog('warn', 'Wake word error', event.error);
+      // Auto-restart on recoverable errors (not-allowed means permission denied — stop)
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        this.stopWakeWord();
+        this.showToast('Microphone access denied — wake word disabled');
+        return;
+      }
+      // Restart after brief delay on other errors (no-speech, network, etc.)
+      if (this.wakeWordEnabled) {
+        setTimeout(() => this.restartWakeWord(), 1000);
+      }
+    };
+
+    this.wakeWordRecognition.onend = () => {
+      // Auto-restart if wake word is still enabled (recognition stops after silence)
+      if (this.wakeWordEnabled && this.wakeWordActive) {
+        setTimeout(() => this.restartWakeWord(), 300);
+      }
+    };
+
+    try {
+      this.wakeWordRecognition.start();
+      this.wakeWordActive = true;
+      document.getElementById('wake-word-indicator')?.classList.remove('hidden');
+    } catch (err) {
+      debugLog('error', 'Failed to start wake word', err);
+    }
+  }
+
+  /** Temporarily pause wake word listener (during command processing) */
+  pauseWakeWord() {
+    this.wakeWordActive = false;
+    try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
+  }
+
+  /** Restart wake word listener after a command completes */
+  restartWakeWord() {
+    if (!this.wakeWordEnabled) return;
+    this.wakeWordActive = false;
+    try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
+    // Small delay to avoid overlapping with any active recognition
+    setTimeout(() => {
+      if (this.wakeWordEnabled && !this.isListening) {
+        this.startWakeWord();
+      }
+    }, 500);
+  }
+
+  /** Stop wake word listener entirely */
+  stopWakeWord() {
+    this.wakeWordEnabled = false;
+    this.wakeWordActive = false;
+    try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
+    this.wakeWordRecognition = null;
+    document.getElementById('wake-word-indicator')?.classList.add('hidden');
+  }
+
+  /** Start a one-shot voice input after the user said just "Hey Battle" with no command */
+  startVoiceInputForWakeWord() {
+    if (!this.voiceSupported || !this.speechRecognition) return;
+    if (this.isListening) return;
+
+    this.isListening = true;
+    this.currentVoiceTarget = null; // No specific input target — use AI processing
+
+    try {
+      this.speechRecognition.start();
+    } catch (err) {
+      debugLog('error', 'Failed to start voice after wake word', err);
+      this.isListening = false;
+      this.restartWakeWord();
+    }
+
+    // The existing onresult/onend handlers in speechRecognition will process
+    // the result and call stopVoiceInput(), which we hook into to restart wake word
   }
 
   async handleVoiceResult(transcript) {
@@ -1741,38 +1925,8 @@ class BattlePlanApp {
     }
 
     const item = await db.addItem(data.text);
-
-    // Apply any extracted data
-    const updates = {};
-    if (data.scheduled_date) {
-      updates.scheduled_for_date = data.scheduled_date;
-      const today = db.getToday();
-      const tomorrow = db.getTomorrow();
-      if (data.scheduled_date === today) updates.status = 'today';
-      else if (data.scheduled_date === tomorrow) updates.status = 'tomorrow';
-      else updates.status = 'next';
-    }
-    if (data.due_date) {
-      updates.dueDate = data.due_date;
-    }
-    if (data.estimate_minutes) {
-      updates.estimate_bucket = data.estimate_minutes;
-      updates.confidence = 'medium';
-    }
-    if (data.recurrence) {
-      updates.recurrence = data.recurrence;
-      if (data.recurrence_day != null) updates.recurrence_day = data.recurrence_day;
-    }
-    if (data.tag && CONSTANTS.VALID_TAGS.includes(data.tag)) {
-      updates.tag = data.tag;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await db.updateItem(item.id, updates);
-    }
-
-    await this.render();
-    await this.updateHUD();
+    await this._applyParsedData(item.id, data);
+    await this._refreshUI();
 
     // Build descriptive toast message
     let msg = `Added: ${data.text.substring(0, 25)}`;
@@ -1839,8 +1993,7 @@ class BattlePlanApp {
         } else {
           await db.setToday(item.id);
         }
-        await this.render();
-        await this.updateHUD();
+        await this._refreshUI();
         this.showToast(`${target === 'tomorrow' ? 'Tomorrow' : 'Today'}: ${item.text.substring(0, 20)}...`);
       } else {
         this.showToast(`No task found for "${keyword}"`);
@@ -1959,8 +2112,7 @@ class BattlePlanApp {
     // ===== FALLBACK: Add as task =====
     // Anything not matched is added as a new task
     await db.addItem(original);
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
     this.showToast(`Added: ${original.substring(0, 30)}...`);
   }
 
@@ -2002,8 +2154,7 @@ class BattlePlanApp {
       this.showToast(`Scheduled for ${data.target_date}: ${item.text.substring(0, 20)}...`);
     }
 
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   async voiceFindTask(keyword) {
@@ -2349,8 +2500,7 @@ class BattlePlanApp {
     this.lastAction = null;
     this.showToast('Undone!');
 
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   // ==================== NOTIFICATIONS ====================
@@ -2597,38 +2747,10 @@ class BattlePlanApp {
       const parsed = await this.smartParseTask(text);
 
       if (parsed && parsed.text) {
-        // AI parsed it — create task with extracted metadata
         const item = await db.addItem(parsed.text);
-        const updates = {};
-
-        if (parsed.scheduled_date) {
-          updates.scheduled_for_date = parsed.scheduled_date;
-          const today = db.getToday();
-          const tomorrow = db.getTomorrow();
-          if (parsed.scheduled_date === today) updates.status = 'today';
-          else if (parsed.scheduled_date === tomorrow) updates.status = 'tomorrow';
-          else updates.status = 'next';
-        }
-        if (parsed.due_date) updates.dueDate = parsed.due_date;
-        if (parsed.estimate_minutes) {
-          updates.estimate_bucket = parsed.estimate_minutes;
-          updates.confidence = 'medium';
-        }
-        if (parsed.recurrence) {
-          updates.recurrence = parsed.recurrence;
-          if (parsed.recurrence_day != null) updates.recurrence_day = parsed.recurrence_day;
-        }
-        if (parsed.tag && CONSTANTS.VALID_TAGS.includes(parsed.tag)) {
-          updates.tag = parsed.tag;
-        }
-
-        if (Object.keys(updates).length > 0) {
-          await db.updateItem(item.id, updates);
-        }
-
+        await this._applyParsedData(item.id, parsed);
         input.value = '';
 
-        // Build feedback message
         const parts = [parsed.text.substring(0, 25)];
         if (parsed.recurrence) parts.push(parsed.recurrence);
         if (parsed.tag) parts.push(parsed.tag);
@@ -2737,8 +2859,7 @@ class BattlePlanApp {
     if (status === 'done') {
       // Complete immediately - actual time from start/done pair or uses estimate
       await db.completeTask(id);
-      await this.render();
-      await this.updateHUD();
+      await this._refreshUI();
       // Check if day needs rebalancing (drift-based)
       await this.checkDriftRerack(id);
       return;
@@ -2782,8 +2903,7 @@ class BattlePlanApp {
       actionDescription = status === 'done' ? 'Marked Done' : `Moved to ${status.charAt(0).toUpperCase() + status.slice(1)}`;
     }
 
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
 
     // Show undo toast
     if (actionDescription) {
@@ -2817,8 +2937,7 @@ class BattlePlanApp {
       msgEl.classList.add('hidden');
     }
 
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   async rebuildTop3() {
@@ -2826,7 +2945,7 @@ class BattlePlanApp {
     const allItems = await db.getAllItems();
     for (const item of allItems) {
       if (item.isTop3) {
-        await db.updateItem(item.id, { isTop3: false, top3Order: null });
+        await db.updateItem(item.id, BattlePlanDB.CLEAR_TOP3);
       }
     }
 
@@ -2884,8 +3003,7 @@ class BattlePlanApp {
 
     this.showToast(`Moved ${movedCount} task${movedCount !== 1 ? 's' : ''} to Tomorrow`);
 
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   // ==================== DAILY CAPACITY OVERRIDE ====================
@@ -3010,8 +3128,7 @@ class BattlePlanApp {
     this.closeAutoScheduleModal();
 
     this.showToast(`Moved ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} to Tomorrow`);
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   closeAutoScheduleModal() {
@@ -3216,8 +3333,7 @@ class BattlePlanApp {
 
     this.closeRerackModal();
     this.showToast(`Moved ${result.overflow.length} task${result.overflow.length !== 1 ? 's' : ''} to Tomorrow`);
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   closeRerackModal() {
@@ -3294,8 +3410,7 @@ class BattlePlanApp {
     await db.deleteItem(itemId);
 
     this.selectedItemId = null;
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
 
     // Show undo toast
     this.showUndoToast('Task deleted');
@@ -3541,8 +3656,7 @@ class BattlePlanApp {
 
     await db.updateItem(this.editingItemId, updates);
     this.closeEditModal();
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   async deleteEditItem() {
@@ -3564,8 +3678,7 @@ class BattlePlanApp {
 
     this.closeEditModal();
     this.selectedItemId = null;
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
 
     // Show undo toast
     this.showUndoToast('Task deleted');
@@ -3659,8 +3772,7 @@ class BattlePlanApp {
       const newStatus = subtask.status === 'done' ? parentStatus : 'done';
       await db.updateItem(subtaskId, { status: newStatus });
       await this.renderSubtasksList();
-      await this.render();
-      await this.updateHUD();
+      await this._refreshUI();
     } catch (err) {
       debugLog('error', 'Error toggling subtask', err);
       this.showToast('Error updating subtask');
@@ -3671,8 +3783,7 @@ class BattlePlanApp {
     try {
       await db.deleteItem(subtaskId);
       await this.renderSubtasksList();
-      await this.render();
-      await this.updateHUD();
+      await this._refreshUI();
     } catch (err) {
       debugLog('error', 'Error deleting subtask', err);
       this.showToast('Error deleting subtask');
@@ -4020,8 +4131,7 @@ class BattlePlanApp {
       if (markDone) {
         // Focus already set started_at, so completeTask will compute accurate actual
         await db.completeTask(this.selectedItemId);
-        await this.render();
-        await this.updateHUD();
+        await this._refreshUI();
         await this.checkDriftRerack(this.selectedItemId);
         this.selectedItemId = null;
         return;
@@ -4029,8 +4139,7 @@ class BattlePlanApp {
     }
 
     this.selectedItemId = null;
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   // ==================== SETTINGS ====================
@@ -4136,8 +4245,7 @@ class BattlePlanApp {
       this.pendingImportData = null;
       document.getElementById('import-confirm-modal').classList.add('hidden');
       this.showToast('Data imported successfully!', 'warning', 4000);
-      await this.render();
-      await this.updateHUD();
+      await this._refreshUI();
     } catch (err) {
       debugLog('error', 'Import error', err);
       this.showToast('Unable to import data. The file may be corrupted or incompatible.', 'warning', 4000);
@@ -4165,8 +4273,7 @@ class BattlePlanApp {
     document.getElementById('waiting-modal').classList.add('hidden');
     this.pendingWaitingId = null;
 
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
     this.showUndoToast('Moved to Waiting');
   }
 
@@ -4209,7 +4316,7 @@ class BattlePlanApp {
           if (action === 'today') {
             await db.setToday(itemId);
           } else if (action === 'done') {
-            await db.updateItem(itemId, { status: 'done', isTop3: false, top3Order: null });
+            await db.updateItem(itemId, { status: 'done', ...BattlePlanDB.CLEAR_TOP3 });
           }
 
           // Remove from list
@@ -4220,8 +4327,7 @@ class BattlePlanApp {
             list.innerHTML = '<li>All overdue tasks handled!</li>';
           }
 
-          await this.render();
-          await this.updateHUD();
+          await this._refreshUI();
         });
       });
     }
@@ -4241,8 +4347,7 @@ class BattlePlanApp {
 
     this.closeOverdueModal();
     this.showToast(`Moved ${overdueItems.length} task${overdueItems.length !== 1 ? 's' : ''} to Today`);
-    await this.render();
-    await this.updateHUD();
+    await this._refreshUI();
   }
 
   closeOverdueModal() {
@@ -4375,10 +4480,11 @@ class BattlePlanApp {
 
   // ==================== UTILITIES ====================
 
+  /** Cached div element for HTML escaping — reused to avoid creating a new element each call */
+  _escDiv = document.createElement('div');
   escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    this._escDiv.textContent = text;
+    return this._escDiv.innerHTML;
   }
 
   /**
