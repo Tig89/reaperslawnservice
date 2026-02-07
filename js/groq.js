@@ -31,6 +31,7 @@ class GroqAssistant {
   hasApiKey() { return this.apiKey && this.apiKey.startsWith('gsk_'); }
   shouldUseAI() { return this.enabled && this.hasApiKey(); }
 
+  /** Returns { today: 'YYYY-MM-DD', dayOfWeek: 'Monday' } for AI prompt context */
   _todayInfo() {
     const d = new Date();
     return {
@@ -40,7 +41,9 @@ class GroqAssistant {
   }
 
   /**
-   * Core Groq API call - shared by all methods
+   * Core Groq API call — shared by parseIntent, parseTaskInput, generateStatsResponse.
+   * Throws on non-OK response so each caller can handle errors differently.
+   * Set json: true to request JSON output format from the model.
    */
   async _callGroq(messages, { temperature = 0.1, max_tokens = 200, json = false } = {}) {
     const body = { model: GROQ_MODEL, messages, temperature, max_tokens };

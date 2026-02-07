@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS = {
 };
 
 class BattlePlanDB {
+  /** Default reset values for Top 3 fields — spread into updates to clear top3 state */
   static CLEAR_TOP3 = { isTop3: false, top3Order: null, top3Date: null, top3Locked: false };
 
   constructor() {
@@ -31,12 +32,14 @@ class BattlePlanDB {
     this.ready = this.init();
   }
 
+  /** Split items into { rated, unrated } based on whether ACE+LMT scores exist */
   _partitionByRating(items) {
     const rated = [], unrated = [];
     for (const item of items) (this.isRated(item) ? rated : unrated).push(item);
     return { rated, unrated };
   }
 
+  /** In-place sort: urgent items (C=5) first, then by score descending */
   _sortByUrgencyAndScore(items, field = 'priority_score') {
     items.sort((a, b) => {
       if (a.isUrgent && !b.isUrgent) return -1;
@@ -538,6 +541,7 @@ class BattlePlanDB {
     }
   }
 
+  /** Get today's usable minutes. Pass false to ignore daily override (returns base capacity). */
   async getUsableCapacity(includeOverride = true) {
     if (includeOverride) {
       const override = await this.getDailyCapacityOverride();
@@ -1201,7 +1205,7 @@ class BattlePlanDB {
     return { version: 4, exported: new Date().toISOString(), items, routines, settings, calibrationHistory };
   }
 
-  // Whitelist of allowed fields (prevents prototype pollution)
+  // Whitelisted fields for import sanitization — prevents prototype pollution & XSS via imported JSON
   static ALLOWED_ITEM_FIELDS = new Set([
     'id', 'text', 'status', 'tag', 'next_action', 'notes',
     'A', 'C', 'E', 'L', 'M', 'T',
@@ -1226,7 +1230,7 @@ class BattlePlanDB {
   static VALID_RECURRENCES = ['', 'daily', 'weekly', 'monthly', null];
   static VALID_TAGS = ['Home', 'Army', 'Business', 'Other'];
 
-  // Generic field filter for sanitization
+  /** Strip unknown keys from an object — only keeps properties in the allowed Set */
   _filterFields(obj, allowedSet) {
     const result = {};
     for (const key of Object.keys(obj)) {

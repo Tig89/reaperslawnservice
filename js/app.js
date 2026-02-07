@@ -114,11 +114,13 @@ class BattlePlanApp {
     this.initOnboarding();
   }
 
+  /** Re-render the current page and update the HUD stats bar */
   async _refreshUI() {
     await this.render();
     await this.updateHUD();
   }
 
+  /** Apply AI/regex-parsed metadata (date, recurrence, tag, estimate) to a newly created task */
   async _applyParsedData(itemId, data) {
     const updates = {};
     if (data.scheduled_date) {
@@ -4323,6 +4325,7 @@ class BattlePlanApp {
 
   // ==================== UTILITIES ====================
 
+  /** Cached div element for HTML escaping — reused to avoid creating a new element each call */
   _escDiv = document.createElement('div');
   escapeHtml(text) {
     this._escDiv.textContent = text;
