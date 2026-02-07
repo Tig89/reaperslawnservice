@@ -84,6 +84,11 @@ class BattlePlanApp {
     this.voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
     this.voiceStartLock = false;
 
+    // Wake word state
+    this.wakeWordEnabled = false;
+    this.wakeWordRecognition = null;
+    this.wakeWordActive = false;
+
     // Undo state
     this.lastAction = null; // { type, itemId, previousState, description }
     this.undoTimeout = null;
@@ -174,6 +179,12 @@ class BattlePlanApp {
 
     // Load Groq AI settings
     this.loadGroqSettings();
+
+    // Load wake word setting
+    this.wakeWordEnabled = await db.getSetting('wake_word_enabled', false);
+    if (this.wakeWordEnabled && this.voiceSupported) {
+      this.startWakeWord();
+    }
 
     // Handle initial page from URL hash (for back button support)
     const hash = window.location.hash.slice(1);
@@ -461,6 +472,17 @@ class BattlePlanApp {
       db.setSetting('swipe_threshold', this.swipeThreshold);
     });
 
+    // Wake word toggle
+    document.getElementById('setting-wake-word').addEventListener('change', (e) => {
+      this.wakeWordEnabled = e.target.checked;
+      db.setSetting('wake_word_enabled', e.target.checked);
+      if (e.target.checked) {
+        this.startWakeWord();
+      } else {
+        this.stopWakeWord();
+      }
+    });
+
     // Theme toggle
     for (const t of ['dark', 'light', 'matrix', 'win98'])
       document.getElementById(`theme-${t}`).addEventListener('click', () => this.setTheme(t));
@@ -624,6 +646,9 @@ class BattlePlanApp {
     document.getElementById('setting-top3-clear').checked = top3Clear;
     document.getElementById('setting-swipe-gestures').checked = swipeEnabled;
     document.getElementById('setting-swipe-threshold').value = swipeThreshold.toString();
+
+    // Wake word setting
+    document.getElementById('setting-wake-word').checked = this.wakeWordEnabled;
 
     // Load notification setting
     document.getElementById('setting-notifications').checked = this.notificationsEnabled;
@@ -1618,6 +1643,9 @@ class BattlePlanApp {
       return;
     }
 
+    // Pause wake word while using manual mic button
+    if (this.wakeWordActive) this.pauseWakeWord();
+
     // Lock to prevent double-start
     this.voiceStartLock = true;
     this.isListening = true;
@@ -1661,6 +1689,133 @@ class BattlePlanApp {
     } catch (err) {
       // Ignore errors when stopping
     }
+
+    // Resume wake word listening if it was active before this command
+    if (this.wakeWordEnabled) {
+      this.restartWakeWord();
+    }
+  }
+
+  // ==================== WAKE WORD ("Hey Battle") ====================
+
+  /** Start always-on background listening for the wake phrase "Hey Battle" */
+  startWakeWord() {
+    if (!this.voiceSupported) return;
+    if (this.wakeWordActive) return;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    this.wakeWordRecognition = new SpeechRecognition();
+    this.wakeWordRecognition.continuous = true;
+    this.wakeWordRecognition.interimResults = true;
+    this.wakeWordRecognition.lang = 'en-US';
+
+    this.wakeWordRecognition.onresult = (event) => {
+      // Check all results for the wake phrase
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript.toLowerCase().trim();
+
+        // Look for "hey battle" in the transcript
+        const wakeIndex = transcript.indexOf('hey battle');
+        if (wakeIndex === -1) continue;
+
+        // Extract the command after "hey battle"
+        const afterWake = transcript.substring(wakeIndex + 10).trim();
+
+        // Only process final results (user finished speaking)
+        if (event.results[i].isFinal) {
+          // Pause wake word listener while we process the command
+          this.pauseWakeWord();
+
+          if (afterWake.length > 0) {
+            // Got "hey battle <command>" — process immediately
+            this.showToast('Processing...', 'listening');
+            this.handleVoiceResult(afterWake);
+          } else {
+            // Got just "hey battle" — start regular voice input for the next phrase
+            this.showToast('Yes? Go ahead...', 'listening');
+            this.startVoiceInputForWakeWord();
+          }
+          return;
+        }
+      }
+    };
+
+    this.wakeWordRecognition.onerror = (event) => {
+      debugLog('warn', 'Wake word error', event.error);
+      // Auto-restart on recoverable errors (not-allowed means permission denied — stop)
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        this.stopWakeWord();
+        this.showToast('Microphone access denied — wake word disabled');
+        return;
+      }
+      // Restart after brief delay on other errors (no-speech, network, etc.)
+      if (this.wakeWordEnabled) {
+        setTimeout(() => this.restartWakeWord(), 1000);
+      }
+    };
+
+    this.wakeWordRecognition.onend = () => {
+      // Auto-restart if wake word is still enabled (recognition stops after silence)
+      if (this.wakeWordEnabled && this.wakeWordActive) {
+        setTimeout(() => this.restartWakeWord(), 300);
+      }
+    };
+
+    try {
+      this.wakeWordRecognition.start();
+      this.wakeWordActive = true;
+      document.getElementById('wake-word-indicator')?.classList.remove('hidden');
+    } catch (err) {
+      debugLog('error', 'Failed to start wake word', err);
+    }
+  }
+
+  /** Temporarily pause wake word listener (during command processing) */
+  pauseWakeWord() {
+    this.wakeWordActive = false;
+    try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
+  }
+
+  /** Restart wake word listener after a command completes */
+  restartWakeWord() {
+    if (!this.wakeWordEnabled) return;
+    this.wakeWordActive = false;
+    try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
+    // Small delay to avoid overlapping with any active recognition
+    setTimeout(() => {
+      if (this.wakeWordEnabled && !this.isListening) {
+        this.startWakeWord();
+      }
+    }, 500);
+  }
+
+  /** Stop wake word listener entirely */
+  stopWakeWord() {
+    this.wakeWordEnabled = false;
+    this.wakeWordActive = false;
+    try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
+    this.wakeWordRecognition = null;
+    document.getElementById('wake-word-indicator')?.classList.add('hidden');
+  }
+
+  /** Start a one-shot voice input after the user said just "Hey Battle" with no command */
+  startVoiceInputForWakeWord() {
+    if (!this.voiceSupported || !this.speechRecognition) return;
+    if (this.isListening) return;
+
+    this.isListening = true;
+    this.currentVoiceTarget = null; // No specific input target — use AI processing
+
+    try {
+      this.speechRecognition.start();
+    } catch (err) {
+      debugLog('error', 'Failed to start voice after wake word', err);
+      this.isListening = false;
+      this.restartWakeWord();
+    }
+
+    // The existing onresult/onend handlers in speechRecognition will process
+    // the result and call stopVoiceInput(), which we hook into to restart wake word
   }
 
   async handleVoiceResult(transcript) {

@@ -1222,7 +1222,7 @@ class BattlePlanDB {
   static ALLOWED_SETTINGS_KEYS = new Set([
     'timerDefault', 'weekday_capacity_minutes', 'weekend_capacity_minutes',
     'always_plan_slack_percent', 'auto_roll_tomorrow_to_today', 'top3_auto_clear_daily',
-    'workday_start_hour', 'workday_end_hour'
+    'workday_start_hour', 'workday_end_hour', 'wake_word_enabled'
   ]);
 
   static VALID_STATUSES = ['inbox', 'today', 'tomorrow', 'next', 'waiting', 'someday', 'done'];
