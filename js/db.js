@@ -23,10 +23,26 @@ const DEFAULT_SETTINGS = {
 };
 
 class BattlePlanDB {
+  static CLEAR_TOP3 = { isTop3: false, top3Order: null, top3Date: null, top3Locked: false };
+
   constructor() {
     this.db = null;
     this._renderCache = null;
     this.ready = this.init();
+  }
+
+  _partitionByRating(items) {
+    const rated = [], unrated = [];
+    for (const item of items) (this.isRated(item) ? rated : unrated).push(item);
+    return { rated, unrated };
+  }
+
+  _sortByUrgencyAndScore(items, field = 'priority_score') {
+    items.sort((a, b) => {
+      if (a.isUrgent && !b.isUrgent) return -1;
+      if (!a.isUrgent && b.isUrgent) return 1;
+      return (b[field] || 0) - (a[field] || 0);
+    });
   }
 
   async init() {
@@ -125,7 +141,7 @@ class BattlePlanDB {
       A: null, C: null, E: null,
       L: null, M: null, T: null,
       estimate_bucket: null, confidence: null, actual_bucket: null,
-      isTop3: false, top3Order: null, top3Date: null, top3Locked: false,
+      ...BattlePlanDB.CLEAR_TOP3,
       scheduled_for_date: null, dueDate: null,
       recurrence: null, recurrence_day: null,
       waiting_on: null, notes: null, parent_id: null,
@@ -246,7 +262,7 @@ class BattlePlanDB {
       A: null, C: null, E: null,
       L: null, M: null, T: null,
       estimate_bucket: null, confidence: null, actual_bucket: null,
-      isTop3: false, top3Order: null, top3Date: null, top3Locked: false,
+      ...BattlePlanDB.CLEAR_TOP3,
       scheduled_for_date: parent.scheduled_for_date, dueDate: parent.dueDate,
       recurrence: null, recurrence_day: null,
       waiting_on: null, notes: null, parent_id: parentId,
@@ -367,10 +383,7 @@ class BattlePlanDB {
     const todayItems = await this.getTodayItems();
     const usableCapacity = await this.getUsableCapacity();
 
-    const rated = [], unrated = [];
-    for (const item of todayItems) {
-      (this.isRated(item) ? rated : unrated).push(item);
-    }
+    const { rated, unrated } = this._partitionByRating(todayItems);
 
     const scored = await Promise.all(rated.map(async item => {
       const scores = this.calculateScores(item);
@@ -381,11 +394,7 @@ class BattlePlanDB {
       return { ...item, ...scores, bufferedMinutes: bufferedMinutes || 0, isUrgent, isMonster, badges };
     }));
 
-    scored.sort((a, b) => {
-      if (a.isUrgent && !b.isUrgent) return -1;
-      if (!a.isUrgent && b.isUrgent) return 1;
-      return (b.priority_score || 0) - (a.priority_score || 0);
-    });
+    this._sortByUrgencyAndScore(scored);
 
     const keep = [], overflow = [];
     let usedMinutes = 0;
@@ -413,10 +422,7 @@ class BattlePlanDB {
 
     const remaining = todayItems.filter(i => i.id !== excludeId && i.status !== 'done');
 
-    const rated = [], unrated = [];
-    for (const item of remaining) {
-      (this.isRated(item) ? rated : unrated).push(item);
-    }
+    const { rated, unrated } = this._partitionByRating(remaining);
 
     const scored = await Promise.all(rated.map(async item => {
       const scores = this.calculateScores(item);
@@ -532,22 +538,19 @@ class BattlePlanDB {
     }
   }
 
-  async getUsableCapacity() {
-    const override = await this.getDailyCapacityOverride();
-    if (override !== null) return override;
-    const isWeekend = this.isWeekend();
-    const capacityKey = isWeekend ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
+  async getUsableCapacity(includeOverride = true) {
+    if (includeOverride) {
+      const override = await this.getDailyCapacityOverride();
+      if (override !== null) return override;
+    }
+    const capacityKey = this.isWeekend() ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
     const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
     const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
     return Math.round(capacity * (1 - slackPercent / 100));
   }
 
   async getDefaultUsableCapacity() {
-    const isWeekend = this.isWeekend();
-    const capacityKey = isWeekend ? 'weekend_capacity_minutes' : 'weekday_capacity_minutes';
-    const capacity = await this.getSetting(capacityKey, DEFAULT_SETTINGS[capacityKey]);
-    const slackPercent = await this.getSetting('always_plan_slack_percent', DEFAULT_SETTINGS.always_plan_slack_percent);
-    return Math.round(capacity * (1 - slackPercent / 100));
+    return this.getUsableCapacity(false);
   }
 
   async getRemainingDayMinutes() {
@@ -653,11 +656,7 @@ class BattlePlanDB {
       return { ...item, ...scores, bufferedMinutes, isUrgent, isMonster };
     }));
 
-    scored.sort((a, b) => {
-      if (a.isUrgent && !b.isUrgent) return -1;
-      if (!a.isUrgent && b.isUrgent) return 1;
-      return (b.priority_score || 0) - (a.priority_score || 0);
-    });
+    this._sortByUrgencyAndScore(scored);
 
     let usedMinutes = 0, monsterCount = 0;
     const selected = [];
@@ -698,7 +697,7 @@ class BattlePlanDB {
 
     for (const item of allItems) {
       if (item.isTop3 && item.top3Date === today && !item.top3Locked) {
-        await this.updateItem(item.id, { isTop3: false, top3Order: null, top3Date: null });
+        await this.updateItem(item.id, BattlePlanDB.CLEAR_TOP3);
       }
     }
 
@@ -734,7 +733,7 @@ class BattlePlanDB {
         top3Date: today, top3Locked: manualToggle
       });
     } else {
-      return this.updateItem(id, { isTop3: false, top3Order: null, top3Date: null, top3Locked: false });
+      return this.updateItem(id, BattlePlanDB.CLEAR_TOP3);
     }
   }
 
@@ -798,7 +797,7 @@ class BattlePlanDB {
     const tomorrow = this.getTomorrow();
     return this.updateItem(id, {
       status: 'tomorrow', scheduled_for_date: tomorrow,
-      isTop3: false, top3Order: null, top3Date: null, top3Locked: false
+      ...BattlePlanDB.CLEAR_TOP3
     });
   }
 
@@ -809,7 +808,7 @@ class BattlePlanDB {
   async deferToTomorrow(id) {
     return this.updateItem(id, {
       status: 'tomorrow', scheduled_for_date: null,
-      isTop3: false, top3Order: null, top3Date: null, top3Locked: false
+      ...BattlePlanDB.CLEAR_TOP3
     });
   }
 
@@ -859,7 +858,7 @@ class BattlePlanDB {
 
       // Clear stale Top 3
       if (autoClearTop3 && item.isTop3 && item.top3Date && item.top3Date !== today && !item.top3Locked) {
-        await this.updateItem(item.id, { isTop3: false, top3Order: null, top3Date: null });
+        await this.updateItem(item.id, BattlePlanDB.CLEAR_TOP3);
         clearedTop3Count++;
       }
     }
@@ -933,7 +932,7 @@ class BattlePlanDB {
     return this.updateItem(id, {
       status: 'done', actual_bucket: finalActual,
       completed_at: now.toISOString(), started_at: null,
-      isTop3: false, top3Order: null, top3Date: null, top3Locked: false
+      ...BattlePlanDB.CLEAR_TOP3
     });
   }
 
@@ -997,7 +996,7 @@ class BattlePlanDB {
       L: originalItem.L, M: originalItem.M, T: originalItem.T,
       estimate_bucket: originalItem.estimate_bucket, confidence: originalItem.confidence,
       actual_bucket: null,
-      isTop3: false, top3Order: null, top3Date: null, top3Locked: false,
+      ...BattlePlanDB.CLEAR_TOP3,
       scheduled_for_date: nextDate, dueDate: null,
       recurrence: originalItem.recurrence, recurrence_day: originalItem.recurrence_day,
       waiting_on: null, notes: null, parent_id: null,
@@ -1435,19 +1434,14 @@ class BattlePlanDB {
       top3BufferedTotal += (await this.getBufferedMinutes(item)) || 0;
     }
 
-    const sorted = ratedItems
-      .map(item => ({
-        text: item.text.substring(0, 30),
-        score: this.calculateScores(item).priority_score,
-        isMonster: this.isMonster(item),
-        isUrgent: item.C === 5
-      }))
-      .sort((a, b) => {
-        if (a.isUrgent && !b.isUrgent) return -1;
-        if (!a.isUrgent && b.isUrgent) return 1;
-        return (b.score || 0) - (a.score || 0);
-      })
-      .slice(0, 5);
+    const mapped = ratedItems.map(item => ({
+      text: item.text.substring(0, 30),
+      score: this.calculateScores(item).priority_score,
+      isMonster: this.isMonster(item),
+      isUrgent: item.C === 5
+    }));
+    this._sortByUrgencyAndScore(mapped, 'score');
+    const sorted = mapped.slice(0, 5);
 
     return {
       date: today, totalItems: allItems.length,

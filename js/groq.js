@@ -31,6 +31,14 @@ class GroqAssistant {
   hasApiKey() { return this.apiKey && this.apiKey.startsWith('gsk_'); }
   shouldUseAI() { return this.enabled && this.hasApiKey(); }
 
+  _todayInfo() {
+    const d = new Date();
+    return {
+      today: d.toISOString().split('T')[0],
+      dayOfWeek: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getDay()]
+    };
+  }
+
   /**
    * Core Groq API call - shared by all methods
    */
@@ -56,8 +64,7 @@ class GroqAssistant {
    * Parse user's voice input and determine intent + extract data
    */
   async parseIntent(userInput, context = {}) {
-    const today = new Date().toISOString().split('T')[0];
-    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+    const { today, dayOfWeek } = this._todayInfo();
 
     const systemPrompt = `You are a voice command parser for a task management app called Battle Plan. Today is ${today} (${dayOfWeek}).
 
@@ -142,8 +149,7 @@ Respond ONLY with valid JSON, no explanation. Example:
   async parseTaskInput(text) {
     if (!this.shouldUseAI()) return null;
 
-    const today = new Date().toISOString().split('T')[0];
-    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+    const { today, dayOfWeek } = this._todayInfo();
 
     const systemPrompt = `Parse this task input and extract structured data. Today is ${today} (${dayOfWeek}).
 

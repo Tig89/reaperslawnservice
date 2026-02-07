@@ -92,7 +92,6 @@
 }
 
 /* Matrix theme specific overrides for better contrast */
-[data-theme="matrix"] .task-card,
 [data-theme="matrix"] .item {
   border: 1px solid #00ff4133;
   box-shadow: 0 0 8px rgba(0, 255, 65, 0.1);
@@ -334,10 +333,6 @@
 }
 
 [data-theme="win98"] .hud-overdue {
-  color: #ff0000;
-}
-
-[data-theme="win98"] .hud-overdue strong {
   color: #ff0000;
 }
 
@@ -1537,10 +1532,6 @@ body {
   color: var(--overdue);
 }
 
-.hud-overdue strong {
-  color: var(--overdue);
-}
-
 .hud-overdue.hidden {
   display: none;
 }
@@ -1641,13 +1632,9 @@ body {
 
 /* HUD urgency colors */
 .hud-urgency-warning { color: var(--warning); }
-.hud-urgency-warning strong { color: var(--warning); }
 .hud-urgency-urgent { color: #ff8c00; }
-.hud-urgency-urgent strong { color: #ff8c00; }
 .hud-urgency-critical { color: var(--danger); }
-.hud-urgency-critical strong { color: var(--danger); }
 .hud-urgency-overdue { color: var(--overdue); }
-.hud-urgency-overdue strong { color: var(--overdue); }
 
 .capacity-warning {
   margin-top: var(--spacing-sm);
@@ -2053,6 +2040,7 @@ mark {
 .input-area {
   display: flex;
   gap: var(--spacing-sm);
+  align-items: center;
   margin-bottom: var(--spacing-md);
 }
 
@@ -2614,7 +2602,7 @@ mark {
 .score-hint {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
-  margin: 0 0 0 0;
+  margin: 0;
   padding-left: 2px;
   line-height: 1.3;
 }
@@ -3308,12 +3296,6 @@ mark {
   50% {
     box-shadow: 0 0 0 12px rgba(233, 69, 96, 0);
   }
-}
-
-.input-area {
-  display: flex;
-  gap: var(--spacing-sm);
-  align-items: center;
 }
 
 /* ==================== TOAST NOTIFICATIONS ==================== */

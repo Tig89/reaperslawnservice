@@ -460,10 +460,8 @@ class BattlePlanApp {
     });
 
     // Theme toggle
-    document.getElementById('theme-dark').addEventListener('click', () => this.setTheme('dark'));
-    document.getElementById('theme-light').addEventListener('click', () => this.setTheme('light'));
-    document.getElementById('theme-matrix').addEventListener('click', () => this.setTheme('matrix'));
-    document.getElementById('theme-win98').addEventListener('click', () => this.setTheme('win98'));
+    for (const t of ['dark', 'light', 'matrix', 'win98'])
+      document.getElementById(`theme-${t}`).addEventListener('click', () => this.setTheme(t));
 
     // Notification settings
     document.getElementById('setting-notifications').addEventListener('change', (e) => {
@@ -2790,7 +2788,7 @@ class BattlePlanApp {
     const allItems = await db.getAllItems();
     for (const item of allItems) {
       if (item.isTop3) {
-        await db.updateItem(item.id, { isTop3: false, top3Order: null });
+        await db.updateItem(item.id, BattlePlanDB.CLEAR_TOP3);
       }
     }
 
@@ -4161,7 +4159,7 @@ class BattlePlanApp {
           if (action === 'today') {
             await db.setToday(itemId);
           } else if (action === 'done') {
-            await db.updateItem(itemId, { status: 'done', isTop3: false, top3Order: null });
+            await db.updateItem(itemId, { status: 'done', ...BattlePlanDB.CLEAR_TOP3 });
           }
 
           // Remove from list
