@@ -247,27 +247,1194 @@
   color: #60aa60;
 }
 
-/* System preference auto theme */
-@media (prefers-color-scheme: light) {
-  [data-theme="system"] {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f0f0f0;
-    --bg-card: #e0e0e0;
-    --accent: #c0392b;
-    --accent-hover: #e74c3c;
-    --accent-secondary: #2980b9;
-    --text-primary: #1a1a1a;
-    --text-secondary: #4a4a4a;
-    --text-muted: #7a7a7a;
-    --success: #27ae60;
-    --warning: #f39c12;
-    --danger: #c0392b;
-    --overdue: #c0392b;
-    --urgent: #c0392b;
-    --critical: #d35400;
-    --monster: #8e44ad;
-    --leverage: #27ae60;
-    --friction: #d35400;
+/* ==================== WINDOWS 98 THEME ==================== */
+[data-theme="win98"] {
+  --bg-primary: #008080;
+  --bg-secondary: #c0c0c0;
+  --bg-card: #c0c0c0;
+  --accent: #000080;
+  --accent-hover: #0000a0;
+  --accent-secondary: #000080;
+  --text-primary: #000000;
+  --text-secondary: #404040;
+  --text-muted: #808080;
+  --success: #008000;
+  --warning: #808000;
+  --danger: #800000;
+  --overdue: #ff0000;
+  --urgent: #ff0000;
+  --critical: #800000;
+  --monster: #800080;
+  --leverage: #008000;
+  --friction: #808000;
+  --done: #008000;
+  --border-radius: 0px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 14px;
+  --font-size-xl: 16px;
+}
+
+/* Win98 - Body & App container */
+[data-theme="win98"] body {
+  font-family: 'MS Sans Serif', 'Microsoft Sans Serif', Tahoma, Arial, sans-serif;
+  background: #008080;
+}
+
+[data-theme="win98"] #app {
+  border: none;
+  background: #008080;
+}
+
+/* Win98 - Header as a title bar */
+[data-theme="win98"] #header {
+  background: #c0c0c0;
+  border-bottom: 2px outset #dfdfdf;
+}
+
+[data-theme="win98"] .header-top {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  padding: 2px 4px;
+  height: 24px;
+}
+
+[data-theme="win98"] #header h1 {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: bold;
+  text-shadow: none;
+  letter-spacing: 0;
+}
+
+[data-theme="win98"] .offline-indicator {
+  background: #c0c0c0;
+  color: #000000;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  animation: none;
+}
+
+/* Win98 - HUD as a status bar */
+[data-theme="win98"] .hud {
+  background: #c0c0c0;
+  border-bottom: 2px groove #808080;
+  padding: 2px 4px;
+}
+
+[data-theme="win98"] .hud-item {
+  color: #000000;
+  font-size: 11px;
+}
+
+[data-theme="win98"] .hud-item strong {
+  color: #000000;
+}
+
+[data-theme="win98"] .hud-overdue {
+  color: #ff0000;
+}
+
+[data-theme="win98"] .hud-overdue strong {
+  color: #ff0000;
+}
+
+[data-theme="win98"] .hud-clickable {
+  border-radius: 0;
+}
+
+[data-theme="win98"] .hud-clickable:hover {
+  background: #000080;
+  color: #ffffff;
+}
+
+[data-theme="win98"] .capacity-warning {
+  background: #ffffe1;
+  border: 1px solid #000000;
+  border-radius: 0;
+  color: #000000;
+}
+
+/* Win98 - Navigation as a toolbar */
+[data-theme="win98"] #nav {
+  background: #c0c0c0;
+  border-bottom: 2px groove #808080;
+}
+
+[data-theme="win98"] .nav-btn {
+  height: 28px;
+  padding: 0 8px;
+  border: 2px outset #dfdfdf;
+  border-bottom: 2px outset #dfdfdf;
+  background: #c0c0c0;
+  color: #000000;
+  font-size: 11px;
+  font-weight: normal;
+  margin: 2px 1px;
+  transition: none;
+}
+
+[data-theme="win98"] .nav-btn:hover {
+  color: #000000;
+}
+
+[data-theme="win98"] .nav-btn:active {
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .nav-btn.active {
+  border: 2px inset #808080;
+  background: #dfdfdf;
+  color: #000000;
+  font-weight: bold;
+}
+
+/* Win98 - Main content area */
+[data-theme="win98"] #main {
+  background: #c0c0c0;
+  border: 2px inset #808080;
+  margin: 2px;
+  padding: 8px;
+}
+
+[data-theme="win98"] .page {
+  animation: none;
+}
+
+/* Win98 - Search bar */
+[data-theme="win98"] .search-bar {
+  background: #c0c0c0;
+  border-bottom: 1px solid #808080;
+  padding: 4px;
+}
+
+[data-theme="win98"] .search-bar input[type="text"] {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+
+[data-theme="win98"] .search-bar input[type="text"]:focus {
+  outline: none;
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .search-bar input::placeholder {
+  color: #808080;
+}
+
+[data-theme="win98"] .search-count {
+  background: #c0c0c0;
+  border: 1px inset #808080;
+  border-radius: 0;
+  color: #000000;
+}
+
+/* Win98 - Item cards as list items */
+[data-theme="win98"] .item {
+  background: #ffffff;
+  border: 1px solid #808080;
+  border-radius: 0;
+  padding: 4px 8px;
+  margin-bottom: 1px;
+  transition: none;
+  box-shadow: none;
+}
+
+[data-theme="win98"] .item:hover {
+  background: #000080;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+[data-theme="win98"] .item:hover .item-text,
+[data-theme="win98"] .item:hover .item-meta,
+[data-theme="win98"] .item:hover .item-score,
+[data-theme="win98"] .item:hover .tag,
+[data-theme="win98"] .item:hover .item-bucket,
+[data-theme="win98"] .item:hover .item-confidence {
+  color: #ffffff;
+}
+
+[data-theme="win98"] .item:active:not(.swiping) {
+  transform: none;
+}
+
+[data-theme="win98"] .item.selected {
+  background: #000080;
+  color: #ffffff;
+  border-left-color: #000080;
+}
+
+[data-theme="win98"] .item.selected .item-text,
+[data-theme="win98"] .item.selected .item-meta {
+  color: #ffffff;
+}
+
+[data-theme="win98"] .item-text {
+  color: #000000;
+  font-weight: normal;
+}
+
+[data-theme="win98"] .item-wrapper {
+  border-radius: 0;
+}
+
+/* Win98 - Badges */
+[data-theme="win98"] .badge {
+  border-radius: 0;
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid;
+}
+
+[data-theme="win98"] .badge-urgent {
+  background: #ff0000;
+  border-color: #800000;
+}
+
+[data-theme="win98"] .badge-critical {
+  background: #800000;
+  border-color: #400000;
+}
+
+[data-theme="win98"] .badge-monster {
+  background: #800080;
+  border-color: #400040;
+}
+
+[data-theme="win98"] .badge-leverage {
+  background: #008000;
+  border-color: #004000;
+}
+
+[data-theme="win98"] .badge-friction {
+  background: #808000;
+  border-color: #404000;
+}
+
+/* Win98 - Item metadata */
+[data-theme="win98"] .item-score {
+  background: #c0c0c0;
+  border: 1px solid #808080;
+  border-radius: 0;
+  color: #000080;
+}
+
+[data-theme="win98"] .item-bucket {
+  background: #c0c0c0;
+  border: 1px solid #808080;
+  border-radius: 0;
+  color: #008000;
+}
+
+[data-theme="win98"] .item-confidence {
+  border-radius: 0;
+  border: 1px solid #808080;
+}
+
+[data-theme="win98"] .item-confidence.high { background: #c0c0c0; color: #008000; }
+[data-theme="win98"] .item-confidence.medium { background: #c0c0c0; color: #808000; }
+[data-theme="win98"] .item-confidence.low { background: #c0c0c0; color: #800080; }
+
+[data-theme="win98"] .tag {
+  border-radius: 0;
+  font-size: 10px;
+  padding: 0 4px;
+}
+
+[data-theme="win98"] .tag-Home { background: #000080; }
+[data-theme="win98"] .tag-Army { background: #008000; }
+[data-theme="win98"] .tag-Business { background: #808000; color: #ffffff; }
+[data-theme="win98"] .tag-Other { background: #808080; }
+
+/* Win98 - Status pills as toolbar buttons */
+[data-theme="win98"] .pill {
+  border-radius: 0;
+  border: 2px outset #dfdfdf;
+  background: #c0c0c0;
+  color: #000000;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  transition: none;
+}
+
+[data-theme="win98"] .pill:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .pill.active {
+  border: 2px inset #808080;
+  background: #dfdfdf;
+  font-weight: bold;
+}
+
+[data-theme="win98"] .pill.pill-today.active { background: #dfdfdf; color: #008000; }
+[data-theme="win98"] .pill.pill-tomorrow.active { background: #dfdfdf; color: #000080; }
+[data-theme="win98"] .pill.pill-next.active { background: #dfdfdf; color: #808000; }
+[data-theme="win98"] .pill.pill-waiting.active { background: #dfdfdf; color: #800080; }
+[data-theme="win98"] .pill.pill-someday.active { background: #dfdfdf; color: #808080; }
+[data-theme="win98"] .pill.pill-done.active { background: #dfdfdf; color: #808080; }
+
+/* Win98 - Top 3 */
+[data-theme="win98"] .top3 .item {
+  background: #ffffcc;
+  border: 1px solid #808000;
+  border-left-color: #000080;
+}
+
+[data-theme="win98"] .top3-badge {
+  background: #000080;
+  border-radius: 0;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+
+/* Win98 - Buttons */
+[data-theme="win98"] .btn-primary,
+[data-theme="win98"] .btn-secondary,
+[data-theme="win98"] .btn-danger {
+  height: 26px;
+  padding: 0 12px;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  font-size: 12px;
+  font-weight: normal;
+  background: #c0c0c0;
+  transition: none;
+}
+
+[data-theme="win98"] .btn-primary {
+  color: #000000;
+}
+
+[data-theme="win98"] .btn-primary:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .btn-primary:active {
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .btn-secondary {
+  color: #000000;
+}
+
+[data-theme="win98"] .btn-secondary:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .btn-danger {
+  color: #800000;
+  border: 2px outset #dfdfdf;
+}
+
+[data-theme="win98"] .btn-danger:hover {
+  background: #800000;
+  color: #ffffff;
+}
+
+[data-theme="win98"] .btn-sm {
+  height: 22px;
+  font-size: 11px;
+}
+
+/* Win98 - Action buttons on items */
+[data-theme="win98"] .done-btn {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #008000;
+  font-weight: bold;
+  transition: none;
+}
+
+[data-theme="win98"] .done-btn:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .done-btn:active {
+  border: 2px inset #808080;
+  transform: none;
+}
+
+[data-theme="win98"] .tomorrow-btn {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000080;
+  transition: none;
+}
+
+[data-theme="win98"] .tomorrow-btn:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .tomorrow-btn:active {
+  border: 2px inset #808080;
+  transform: none;
+}
+
+[data-theme="win98"] .top3-toggle {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000080;
+}
+
+[data-theme="win98"] .top3-toggle.in-top3 {
+  background: #c0c0c0;
+  border: 2px inset #808080;
+  color: #808080;
+}
+
+[data-theme="win98"] .start-work-btn {
+  border: 2px outset #dfdfdf;
+  background: #c0c0c0;
+  border-radius: 0;
+  color: #000000;
+  transition: none;
+}
+
+[data-theme="win98"] .start-work-btn:hover {
+  background: #dfdfdf;
+}
+
+/* Win98 - Input area */
+[data-theme="win98"] .input-area input {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 26px;
+  font-size: 12px;
+  transition: none;
+}
+
+[data-theme="win98"] .input-area input:focus {
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .input-area input::placeholder {
+  color: #808080;
+}
+
+[data-theme="win98"] .input-area button {
+  width: 26px;
+  height: 26px;
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  font-size: 14px;
+  transition: none;
+}
+
+[data-theme="win98"] .input-area button:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .input-area button:active {
+  border: 2px inset #808080;
+  transform: none;
+}
+
+/* Win98 - Modals as dialog windows */
+[data-theme="win98"] .overlay {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: none;
+}
+
+[data-theme="win98"] .modal-content {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  padding: 0;
+}
+
+[data-theme="win98"] .modal-content h3 {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: bold;
+  padding: 3px 6px;
+  margin-bottom: 0;
+}
+
+[data-theme="win98"] .modal-hint {
+  color: #000000;
+  padding: 4px 8px;
+}
+
+[data-theme="win98"] .modal-content input[type="text"],
+[data-theme="win98"] .modal-content input[type="number"],
+[data-theme="win98"] .modal-content input[type="date"],
+[data-theme="win98"] .modal-content select {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 12px;
+  margin: 4px 8px;
+  width: calc(100% - 16px);
+}
+
+[data-theme="win98"] .modal-content textarea {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  font-size: 12px;
+  margin: 4px 8px;
+  width: calc(100% - 16px);
+}
+
+[data-theme="win98"] .modal-content input:focus,
+[data-theme="win98"] .modal-content select:focus,
+[data-theme="win98"] .modal-content textarea:focus {
+  border: 2px inset #808080;
+  outline: 1px dotted #000000;
+}
+
+[data-theme="win98"] .modal-actions {
+  padding: 8px;
+  margin-top: 0;
+}
+
+[data-theme="win98"] .modal-actions button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 16px;
+  font-size: 12px;
+  border: 2px outset #dfdfdf;
+  background: #c0c0c0;
+  color: #000000;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .modal-actions button:active {
+  border: 2px inset #808080;
+}
+
+/* Win98 - Edit sections */
+[data-theme="win98"] .edit-section {
+  background: #c0c0c0;
+  border: 2px groove #808080;
+  border-radius: 0;
+  margin: 8px;
+  padding: 8px;
+}
+
+[data-theme="win98"] .edit-section > label {
+  color: #000000;
+  font-weight: bold;
+}
+
+[data-theme="win98"] .edit-row label {
+  color: #000000;
+}
+
+/* Win98 - Score buttons as option buttons */
+[data-theme="win98"] .score-buttons button {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 11px;
+  transition: none;
+}
+
+[data-theme="win98"] .score-buttons button:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .score-buttons button.active {
+  background: #000080;
+  color: #ffffff;
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .score-label {
+  color: #000000;
+}
+
+/* Win98 - Tag buttons */
+[data-theme="win98"] .tag-btn {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 11px;
+  transition: none;
+}
+
+[data-theme="win98"] .tag-btn.active {
+  border: 2px inset #808080;
+  color: #000080;
+  font-weight: bold;
+}
+
+/* Win98 - Preset & bucket buttons */
+[data-theme="win98"] .preset-btn,
+[data-theme="win98"] .bucket-btn,
+[data-theme="win98"] .confidence-btn,
+[data-theme="win98"] .actual-bucket-btn {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 11px;
+  transition: none;
+}
+
+[data-theme="win98"] .preset-btn:hover,
+[data-theme="win98"] .bucket-btn:hover,
+[data-theme="win98"] .confidence-btn:hover,
+[data-theme="win98"] .actual-bucket-btn:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .bucket-btn.active,
+[data-theme="win98"] .confidence-btn.active {
+  background: #000080;
+  color: #ffffff;
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .confidence-btn.active[data-confidence="low"] {
+  background: #800080;
+  border: 2px inset #808080;
+}
+
+[data-theme="win98"] .confidence-btn.active[data-confidence="medium"] {
+  background: #808000;
+  border: 2px inset #808080;
+  color: #ffffff;
+}
+
+/* Win98 - Settings as property sheets */
+[data-theme="win98"] .settings-section {
+  background: #c0c0c0;
+  border: 2px groove #808080;
+  border-radius: 0;
+  padding: 12px;
+}
+
+[data-theme="win98"] .settings-section h3 {
+  color: #000000;
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+
+[data-theme="win98"] .settings-section p {
+  color: #000000;
+  font-size: 11px;
+}
+
+[data-theme="win98"] .setting-row label {
+  color: #000000;
+  font-size: 11px;
+}
+
+[data-theme="win98"] .setting-row input {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 12px;
+}
+
+[data-theme="win98"] .setting-row input:focus {
+  border: 2px inset #808080;
+  outline: 1px dotted #000000;
+}
+
+[data-theme="win98"] .setting-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #000000;
+}
+
+[data-theme="win98"] .setting-row select {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 11px;
+}
+
+[data-theme="win98"] .setting-hint {
+  color: #404040;
+}
+
+/* Win98 - Theme toggle */
+[data-theme="win98"] .theme-toggle {
+  background: #c0c0c0;
+  border-radius: 0;
+  gap: 1px;
+  padding: 0;
+}
+
+[data-theme="win98"] .theme-btn {
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  background: #c0c0c0;
+  color: #000000;
+  font-size: 11px;
+  transition: none;
+  padding: 2px 6px;
+}
+
+[data-theme="win98"] .theme-btn.active {
+  background: #dfdfdf;
+  border: 2px inset #808080;
+  color: #000000;
+  font-weight: bold;
+}
+
+[data-theme="win98"] .theme-btn:hover:not(.active) {
+  background: #dfdfdf;
+}
+
+/* Win98 - Timer presets */
+[data-theme="win98"] .timer-preset {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 12px;
+  transition: none;
+}
+
+[data-theme="win98"] .timer-preset:hover,
+[data-theme="win98"] .timer-preset.active {
+  background: #000080;
+  color: #ffffff;
+  border: 2px inset #808080;
+}
+
+/* Win98 - Analytics */
+[data-theme="win98"] .analytics-card {
+  background: #c0c0c0;
+  border: 2px groove #808080;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .analytics-card h3 {
+  color: #000080;
+}
+
+[data-theme="win98"] .stat-row {
+  border-bottom: 1px solid #808080;
+}
+
+[data-theme="win98"] .stat-row span {
+  color: #000000;
+}
+
+[data-theme="win98"] .stat-row strong {
+  color: #000080;
+}
+
+/* Win98 - Routines */
+[data-theme="win98"] .routine-item {
+  background: #c0c0c0;
+  border: 2px groove #808080;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .routine-checklist li::before {
+  color: #000000;
+}
+
+[data-theme="win98"] #routine-items-list li {
+  background: #ffffff;
+  border: 1px solid #808080;
+  border-radius: 0;
+}
+
+[data-theme="win98"] #routine-items-list button {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  font-size: 10px;
+}
+
+/* Win98 - Focus timer */
+[data-theme="win98"] #focus-timer {
+  color: #000080;
+  font-family: 'Courier New', monospace;
+}
+
+/* Win98 - Toast as a message box */
+[data-theme="win98"] .toast {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  box-shadow: 2px 2px 0 #000000;
+}
+
+[data-theme="win98"] .toast-undo .undo-btn {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  font-weight: normal;
+}
+
+/* Win98 - Confirm dialogs */
+[data-theme="win98"] .confirm-dialog {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .confirm-btn {
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  background: #c0c0c0;
+  color: #000000;
+  height: 26px;
+  font-size: 12px;
+  transition: none;
+}
+
+[data-theme="win98"] .confirm-cancel {
+  background: #c0c0c0;
+  color: #000000;
+}
+
+[data-theme="win98"] .confirm-ok {
+  background: #c0c0c0;
+  color: #000000;
+}
+
+[data-theme="win98"] .confirm-btn:hover {
+  outline: 1px dotted #000000;
+  outline-offset: -4px;
+}
+
+[data-theme="win98"] .confirm-btn:active {
+  border: 2px inset #808080;
+}
+
+/* Win98 - Onboarding dialog */
+[data-theme="win98"] .onboarding-card {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .onboarding-card h2 {
+  color: #000080;
+}
+
+[data-theme="win98"] .onboarding-num {
+  background: #000080;
+  border-radius: 0;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  font-size: 11px;
+}
+
+[data-theme="win98"] .onboarding-start-btn {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+  font-size: 14px;
+  height: 30px;
+  transition: none;
+}
+
+[data-theme="win98"] .onboarding-start-btn:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] .onboarding-start-btn:active {
+  border: 2px inset #808080;
+}
+
+/* Win98 - Swipe gestures */
+[data-theme="win98"] .swipe-tray-right {
+  background: #008000;
+}
+
+[data-theme="win98"] .swipe-tray-left {
+  background: #000080;
+}
+
+[data-theme="win98"] .swipe-action {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  color: #000000;
+}
+
+/* Win98 - Voice button */
+[data-theme="win98"] .voice-btn {
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  background: #c0c0c0;
+  color: #000000;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  transition: none;
+}
+
+[data-theme="win98"] .voice-btn:hover {
+  background: #dfdfdf;
+  color: #000000;
+}
+
+[data-theme="win98"] .voice-btn.listening {
+  background: #000080;
+  color: #ffffff;
+  animation: none;
+  border: 2px inset #808080;
+}
+
+/* Win98 - Recurrence selects */
+[data-theme="win98"] .recurrence-options select {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 11px;
+}
+
+/* Win98 - Badges on items */
+[data-theme="win98"] .recurring-badge,
+[data-theme="win98"] .notes-badge,
+[data-theme="win98"] .waiting-on-badge {
+  border-radius: 0;
+  border: 1px solid #808080;
+}
+
+[data-theme="win98"] .subtask-progress {
+  border-radius: 0;
+  border: 1px solid #808080;
+}
+
+/* Win98 - Subtasks */
+[data-theme="win98"] .subtask-item {
+  background: #ffffff;
+  border: 1px solid #808080;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .subtask-add input {
+  background: #ffffff;
+  border: 2px inset #808080;
+  border-radius: 0;
+  color: #000000;
+  height: 24px;
+  font-size: 12px;
+}
+
+/* Win98 - Edit button on cards */
+[data-theme="win98"] .item-edit-btn {
+  border-radius: 0;
+  transition: none;
+}
+
+[data-theme="win98"] .item-edit-btn:hover {
+  background: #c0c0c0;
+  color: #000000;
+}
+
+/* Win98 - Rerack modal */
+[data-theme="win98"] .rerack-header {
+  border-radius: 0;
+}
+
+[data-theme="win98"] .rerack-overrun {
+  background: #ffffe1;
+  border: 1px solid #808000;
+}
+
+[data-theme="win98"] .rerack-overcap {
+  background: #ffcccc;
+  border: 1px solid #800000;
+}
+
+[data-theme="win98"] .rerack-lock-btn {
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  background: #c0c0c0;
+  color: #000000;
+}
+
+[data-theme="win98"] .rerack-lock-btn.locked {
+  border: 2px inset #808080;
+  background: #dfdfdf;
+  color: #000080;
+}
+
+[data-theme="win98"] .schedule-capacity {
+  background: #c0c0c0;
+  border: 1px inset #808080;
+  border-radius: 0;
+}
+
+[data-theme="win98"] .schedule-item {
+  border-radius: 0;
+}
+
+[data-theme="win98"] .schedule-item-keep {
+  background: #ccffcc;
+}
+
+[data-theme="win98"] .schedule-item-overflow {
+  background: #ffffcc;
+}
+
+/* Win98 - Scrollbars */
+[data-theme="win98"] ::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+[data-theme="win98"] ::-webkit-scrollbar-track {
+  background: #c0c0c0;
+  border: 1px solid #808080;
+}
+
+[data-theme="win98"] ::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+}
+
+[data-theme="win98"] ::-webkit-scrollbar-thumb:hover {
+  background: #dfdfdf;
+}
+
+[data-theme="win98"] ::-webkit-scrollbar-button {
+  background: #c0c0c0;
+  border: 2px outset #dfdfdf;
+  width: 16px;
+  height: 16px;
+}
+
+/* Win98 - Import warning */
+[data-theme="win98"] .import-warning {
+  background: #ffcccc;
+  color: #800000;
+  border: 1px solid #800000;
+  border-radius: 0;
+}
+
+/* Win98 - Storage info */
+[data-theme="win98"] .storage-info {
+  background: #c0c0c0;
+  border: 1px inset #808080;
+  border-radius: 0;
+  color: #000000;
+}
+
+/* Win98 - Empty state */
+[data-theme="win98"] .empty-state {
+  color: #404040;
+}
+
+/* Win98 - Search highlight */
+[data-theme="win98"] mark {
+  background: #000080;
+  color: #ffffff;
+  border-radius: 0;
+}
+
+/* Win98 - Suggestion message */
+[data-theme="win98"] .suggestion-message {
+  background: #ffffe1;
+  border: 1px solid #000000;
+  border-radius: 0;
+  color: #000000;
+}
+
+/* Win98 - Today capacity button */
+[data-theme="win98"] .today-capacity-btn {
+  border: 2px outset #dfdfdf;
+  border-radius: 0;
+  background: #c0c0c0;
+  color: #000000;
+}
+
+[data-theme="win98"] .today-capacity-btn.overridden {
+  border: 2px inset #808080;
+  font-weight: bold;
+  color: #000080;
+}
+
+/* Win98 - Help section */
+[data-theme="win98"] .help-section h4 {
+  color: #000080;
+}
+
+[data-theme="win98"] .help-list li {
+  color: #000000;
+}
+
+[data-theme="win98"] .help-list strong {
+  color: #000080;
+}
+
+/* Win98 - Section labels */
+[data-theme="win98"] .schedule-section-label {
+  border-bottom: 1px solid #808080;
+}
+
+[data-theme="win98"] .schedule-keep-label { color: #008000; }
+[data-theme="win98"] .schedule-overflow-label { color: #808000; }
+
+/* Win98 - headings */
+[data-theme="win98"] h2,
+[data-theme="win98"] h3 {
+  color: #000000;
+}
+
+[data-theme="win98"] #today-section h3,
+[data-theme="win98"] #top3-section h3 {
+  color: #000000;
+}
+
+[data-theme="win98"] #top3-count {
+  color: #000080;
+}
+
+/* Win98 - urgency pulse override (no animation) */
+[data-theme="win98"] .item.urgency-overdue {
+  animation: none;
+  background: #ffcccc;
+}
+
+/* Win98 - Wide screen border override */
+@media (min-width: 601px) {
+  [data-theme="win98"] #app {
+    border: 2px outset #dfdfdf;
+    box-shadow: 2px 2px 0 #000000;
   }
 }
 
