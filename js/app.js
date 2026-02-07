@@ -212,6 +212,7 @@ class BattlePlanApp {
     this.updateOfflineIndicator();
     window.addEventListener('online', () => this.updateOfflineIndicator());
     window.addEventListener('offline', () => this.updateOfflineIndicator());
+    window.addEventListener('ai-online', () => this.updateOfflineIndicator(true));
 
     // Check storage quota
     this.checkStorageQuota();
@@ -247,9 +248,9 @@ class BattlePlanApp {
     }
   }
 
-  updateOfflineIndicator() {
+  updateOfflineIndicator(forceOnline = false) {
     const indicator = document.getElementById('offline-indicator');
-    if (navigator.onLine) {
+    if (navigator.onLine || forceOnline) {
       indicator.classList.add('hidden');
     } else {
       // Only show if AI is configured (offline doesn't affect the app otherwise)
@@ -1700,7 +1701,7 @@ class BattlePlanApp {
 
   /** Start always-on background listening for the wake phrase "Hey Battle" */
   startWakeWord() {
-    if (!this.voiceSupported) return;
+    if (!this.voiceSupported || !this.wakeWordEnabled) return;
     if (this.wakeWordActive) return;
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1758,6 +1759,9 @@ class BattlePlanApp {
       // Auto-restart if wake word is still enabled (recognition stops after silence)
       if (this.wakeWordEnabled && this.wakeWordActive) {
         setTimeout(() => this.restartWakeWord(), 300);
+      } else {
+        // Ensure badge is hidden when not restarting
+        document.getElementById('wake-word-indicator')?.classList.add('hidden');
       }
     };
 
