@@ -306,16 +306,6 @@
   letter-spacing: 0;
 }
 
-[data-theme="win98"] .offline-indicator {
-  background: #c0c0c0;
-  color: #000000;
-  border: 2px outset #dfdfdf;
-  border-radius: 0;
-  font-size: 11px;
-  padding: 1px 6px;
-  animation: none;
-}
-
 /* Win98 - HUD as a status bar */
 [data-theme="win98"] .hud {
   background: #c0c0c0;
@@ -1478,34 +1468,6 @@ body {
   color: var(--accent);
 }
 
-.offline-indicator {
-  background: var(--danger);
-  color: white;
-  font-size: var(--font-size-xs);
-  font-weight: bold;
-  padding: 4px 10px;
-  border-radius: 12px;
-  animation: pulse 2s infinite;
-}
-
-.offline-indicator::before {
-  content: '📴 ';
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.wake-word-indicator {
-  background: var(--success);
-  color: white;
-  font-size: var(--font-size-xs);
-  font-weight: bold;
-  padding: 4px 10px;
-  border-radius: 12px;
-  animation: pulse 2s infinite;
-}
 
 /* ==================== HUD ==================== */
 .hud {

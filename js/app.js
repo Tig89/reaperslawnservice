@@ -208,12 +208,6 @@ class BattlePlanApp {
     setTimeout(() => this.checkTimePressure(), 5000);
     this.scheduleNextTimePressureCheck();
 
-    // Offline/online detection
-    this.updateOfflineIndicator();
-    window.addEventListener('online', () => this.updateOfflineIndicator());
-    window.addEventListener('offline', () => this.updateOfflineIndicator());
-    window.addEventListener('ai-online', () => this.updateOfflineIndicator(true));
-
     // Check storage quota
     this.checkStorageQuota();
   }
@@ -245,21 +239,6 @@ class BattlePlanApp {
     } catch (e) {
       debugLog('warn', 'Could not check storage quota', e);
       document.getElementById('storage-usage').textContent = 'N/A';
-    }
-  }
-
-  updateOfflineIndicator(forceOnline = false) {
-    const indicator = document.getElementById('offline-indicator');
-    if (navigator.onLine || forceOnline) {
-      indicator.classList.add('hidden');
-    } else {
-      // Only show if AI is configured (offline doesn't affect the app otherwise)
-      if (groqAssistant.shouldUseAI()) {
-        indicator.textContent = 'AI offline';
-      } else {
-        indicator.textContent = 'Offline';
-      }
-      indicator.classList.remove('hidden');
     }
   }
 
@@ -1760,15 +1739,12 @@ class BattlePlanApp {
       if (this.wakeWordEnabled && this.wakeWordActive) {
         setTimeout(() => this.restartWakeWord(), 300);
       } else {
-        // Ensure badge is hidden when not restarting
-        document.getElementById('wake-word-indicator')?.classList.add('hidden');
       }
     };
 
     try {
       this.wakeWordRecognition.start();
       this.wakeWordActive = true;
-      document.getElementById('wake-word-indicator')?.classList.remove('hidden');
     } catch (err) {
       debugLog('error', 'Failed to start wake word', err);
     }
@@ -1799,7 +1775,6 @@ class BattlePlanApp {
     this.wakeWordActive = false;
     try { this.wakeWordRecognition?.stop(); } catch (e) { /* ignore */ }
     this.wakeWordRecognition = null;
-    document.getElementById('wake-word-indicator')?.classList.add('hidden');
   }
 
   /** Start a one-shot voice input after the user said just "Hey Battle" with no command */
